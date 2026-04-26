@@ -153,8 +153,8 @@ class SimulationManager:
                 return response
     
     def step_simulation(
-        self, 
-        simulation_id: str, 
+        self,
+        simulation_id: str,
         request: StepSimulationRequest
     ) -> StepSimulationResponse:
         """

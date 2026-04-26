@@ -2,7 +2,8 @@
 
 from .topology import TopologyData, NodeData, EdgeData, BoundingBox, NodeId, EdgeId, Coordinates
 from .vehicles import (
-    Vehicle, VehicleState, VehicleType, VehicleTypeConfig, 
+    Vehicle, VehicleState, VehicleType, VehicleTypeConfig,
+    PublicTransport,
     VEHICLE_TYPE_CONFIGS
 )
 from .traffic_lights import (
@@ -20,6 +21,7 @@ __all__ = [
     
     # Vehicles
     'Vehicle', 'VehicleState', 'VehicleType', 'VehicleTypeConfig',
+    'PublicTransport',
     'VEHICLE_TYPE_CONFIGS',
     
     # Traffic lights

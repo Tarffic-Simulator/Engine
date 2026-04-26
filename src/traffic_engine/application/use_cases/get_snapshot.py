@@ -144,6 +144,22 @@ class GetSnapshotUseCase:
                 'speed_kmh': vehicle.speed_kmh,
                 'wait_ticks': vehicle.wait_ticks,
             }
+
+            lane_index = getattr(vehicle, 'lane_index', None)
+            if lane_index is not None:
+                vehicle_dict['lane_index'] = lane_index
+
+            lateral_offset_m = getattr(vehicle, 'lateral_offset_m', None)
+            if lateral_offset_m is not None:
+                vehicle_dict['lateral_offset_m'] = lateral_offset_m
+
+            render_label = getattr(vehicle, 'render_label', None)
+            if render_label is not None:
+                vehicle_dict['render_label'] = render_label
+
+            render_color = getattr(vehicle, 'render_color', None)
+            if render_color is not None:
+                vehicle_dict['render_color'] = render_color
             
             # Add detailed info if requested
             if request.include_vehicle_details:
@@ -237,6 +253,11 @@ class GetSnapshotUseCase:
                     'occupancy_cells': edge_state.get('occupancy_cells', []),
                     'velocity_profile': edge_state.get('velocity_profile', []),
                 }
+
+                if 'n_lanes' in edge_state:
+                    edge_dict['n_lanes'] = edge_state['n_lanes']
+                if 'occupancy_cells_lane_major' in edge_state:
+                    edge_dict['occupancy_cells_lane_major'] = edge_state['occupancy_cells_lane_major']
                 
                 # Add physical properties if available
                 if 'length_m' in edge_state:

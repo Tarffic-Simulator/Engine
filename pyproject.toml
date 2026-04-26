@@ -63,9 +63,6 @@ traffic-engine = "traffic_engine.api.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.package-data]
-traffic_engine = ["py.typed"]
-
 [tool.black]
 line-length = 100
 target-version = ['py38']

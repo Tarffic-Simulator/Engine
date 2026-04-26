@@ -152,6 +152,7 @@ db.createCollection("simulation_runs", {
 
 db.simulation_runs.createIndex({ run_id: 1 }, { unique: true });
 db.simulation_runs.createIndex({ session_id: 1, created_at: -1 });
+db.simulation_runs.createIndex({ session_id: 1, status: 1, created_at: -1 });
 db.simulation_runs.createIndex({ status: 1, created_at: -1 });
 
 db.createCollection("simulation_ticks", {

@@ -22,7 +22,7 @@ class NodeData:
     
     Attributes:
         x: Longitude (geographic x-coordinate)
-        y: Latitude (geographic y-coordinate) 
+        y: Latitude (geographic y-coordinate)
         is_boundary: True if node is on network perimeter (for inflow/outflow)
     """
     x: float
@@ -41,12 +41,20 @@ class EdgeData:
         n_cells: Number of discrete cells (length_m / CELL_SIZE_M)
         vmax_cells: Maximum velocity in cells per tick for this edge
         geometry_points: List of (x,y) points defining the edge shape
+        n_lanes: Number of travel lanes available on this edge (minimum 1)
     """
     length_m: float
     speed_kph: float
     n_cells: int
     vmax_cells: int
     geometry_points: List[Coordinates]
+    n_lanes: int = 1
+
+    def __post_init__(self) -> None:
+        """Normalize discretization values to safe minimums."""
+        self.n_cells = max(1, int(self.n_cells))
+        self.vmax_cells = max(1, int(self.vmax_cells))
+        self.n_lanes = max(1, int(self.n_lanes))
 
 
 @dataclass
@@ -56,7 +64,7 @@ class BoundingBox:
     
     Attributes:
         min_x: Minimum longitude
-        max_x: Maximum longitude  
+        max_x: Maximum longitude
         min_y: Minimum latitude
         max_y: Maximum latitude
     """

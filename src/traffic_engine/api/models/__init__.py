@@ -23,4 +23,11 @@ __all__ = [
     'GetMetricsResponse', 
     'GetSnapshotResponse',
     'CreateRealtimeSessionResponse',
+    'RealtimeAvailabilityResponse',
+    'RealtimeSessionSummaryResponse',
+    'ListRealtimeSessionsResponse',
+    'RealtimeRunSummaryResponse',
+    'ListRealtimeRunsResponse',
+    'RealtimeTickResponse',
+    'ListRealtimeTicksResponse',
 ]

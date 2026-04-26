@@ -3,7 +3,7 @@ description: "Use when: writing pytest tests before implementation (TDD), genera
 model: GPT-5.3-Codex (copilot)
 
 name: "Python TDD"
-tools: [read, edit, search, web, 'gitkraken/*', 'pylance-mcp-server/*', ms-python.python/getPythonEnvironmentInfo, ms-python.python/getPythonExecutableCommand, ms-python.python/installPythonPackage, ms-python.python/configurePythonEnvironment, todo]
+tools: [vscode, execute, read, edit, search, web, browser, 'gitkraken/*', 'pylance-mcp-server/*', ms-python.python/getPythonEnvironmentInfo, ms-python.python/getPythonExecutableCommand, ms-python.python/installPythonPackage, ms-python.python/configurePythonEnvironment, todo]
 argument-hint: "Paste the function signature, class definition, or behavioral specification to generate tests for."
 ---
 

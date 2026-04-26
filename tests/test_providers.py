@@ -8,6 +8,7 @@ supporting different implementations (OSMnx, mock, future databases).
 import pytest
 from typing import Dict, List, Set, Tuple, Protocol, Optional
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 import networkx as nx
 
 
@@ -116,6 +117,53 @@ class TestTopologyProvider:
             nx_edge = G[u][v][k]
             assert edge_data['length_m'] == nx_edge['length'], "Length should match NetworkX"
             assert edge_data['speed_kph'] == nx_edge['speed_kph'], "Speed should match NetworkX"
+
+    def test_osmnx_topology_provider_prepare_graph_supports_osmnx_v2_distance_namespace(
+        self,
+        monkeypatch,
+    ):
+        """Test provider resolves add_edge_lengths from ox.distance on OSMnx 2.x."""
+        # Arrange
+        from traffic_engine.infrastructure.topology import osmnx_provider as provider_module
+
+        calls = []
+
+        def fake_add_edge_lengths(graph: nx.MultiDiGraph) -> nx.MultiDiGraph:
+            calls.append('lengths')
+            return graph
+
+        def fake_add_edge_speeds(graph: nx.MultiDiGraph) -> nx.MultiDiGraph:
+            calls.append('speeds')
+            return graph
+
+        fake_ox = SimpleNamespace(
+            add_edge_lengths=None,
+            add_edge_speeds=fake_add_edge_speeds,
+            distance=SimpleNamespace(add_edge_lengths=fake_add_edge_lengths),
+            routing=SimpleNamespace(add_edge_speeds=fake_add_edge_speeds),
+        )
+        monkeypatch.setattr(provider_module, 'ox', fake_ox)
+
+        graph = nx.MultiDiGraph()
+        graph.add_node('A', x=-99.1332, y=19.4326)
+        graph.add_node('B', x=-99.1312, y=19.4326)
+        graph.add_edge(
+            'A',
+            'B',
+            0,
+            length=150.0,
+            maxspeed=40,
+            highway='residential',
+        )
+
+        provider = provider_module.OSMnxTopologyProvider.__new__(provider_module.OSMnxTopologyProvider)
+
+        # Act
+        prepared_graph = provider._prepare_graph(graph)
+
+        # Assert
+        assert prepared_graph is graph, "Prepare graph should preserve graph instance"
+        assert calls == ['lengths', 'speeds'], "Provider should resolve OSMnx 2.x helper layout"
     
     def test_topology_provider_caching_improves_performance(self):
         """Test topology provider supports caching for repeated requests."""

@@ -34,7 +34,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS middleware for web dashboard access
+# CORS middleware for external API consumers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Configure appropriately for production

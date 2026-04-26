@@ -48,7 +48,7 @@ class TestPhysicalConfiguration:
         """Test speed conversion applies vehicle type factors correctly."""
         # Arrange
         cell_size_m = simulation_config['cell_size_m'] 
-        base_speed = 40.0
+        base_speed = 50.0
         base_vmax = self._speed_to_vmax(base_speed, cell_size_m)
         
         # Act & Assert - car (factor=1.0) should maintain base speed

@@ -20,6 +20,7 @@ from ...domain.models import (
     NodeId, EdgeId, Coordinates
 )
 from ...config.constants import CELL_SIZE_M
+from .lane_defaults import resolve_edge_lane_count
 
 
 class TopologyConverter:
@@ -111,6 +112,10 @@ class TopologyConverter:
             # Extract edge properties
             length_m = float(edge_attrs.get('length', 100.0))  # Default 100m
             speed_kph = self._parse_speed(self._get_speed_attribute(edge_attrs))
+            n_lanes = resolve_edge_lane_count(
+                raw_lanes=edge_attrs.get('lanes'),
+                highway=edge_attrs.get('highway'),
+            )
             
             # Discretize for cellular automata
             n_cells = max(1, int(math.ceil(length_m / self.cell_size_m)))
@@ -125,7 +130,8 @@ class TopologyConverter:
                 speed_kph=speed_kph,
                 n_cells=n_cells,
                 vmax_cells=vmax_cells,
-                geometry_points=geometry_points
+                geometry_points=geometry_points,
+                n_lanes=n_lanes,
             )
         
         return edges

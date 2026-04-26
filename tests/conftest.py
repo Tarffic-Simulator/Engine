@@ -13,7 +13,7 @@ from uuid import uuid4
 def simple_network():
     """Small in-memory NetworkX MultiDiGraph for testing without OSM data.
     
-    Creates a simple 4-node diamond network:
+    Creates a simple 4-node diamond network with one extra diagonal:
     
         A --- B
         |     |
@@ -35,9 +35,8 @@ def simple_network():
         ('B', 'C', {'length': 200.0, 'speed_kph': 30.0, 'highway': 'residential', 'lanes': 1}),
         ('C', 'D', {'length': 150.0, 'speed_kph': 40.0, 'highway': 'secondary', 'lanes': 2}),
         ('D', 'A', {'length': 200.0, 'speed_kph': 30.0, 'highway': 'residential', 'lanes': 1}),
-        # Diagonal connections for more routing options
+        # One diagonal connection keeps perimeter nodes distinguishable.
         ('A', 'C', {'length': 250.0, 'speed_kph': 50.0, 'highway': 'primary', 'lanes': 3}),
-        ('B', 'D', {'length': 250.0, 'speed_kph': 50.0, 'highway': 'primary', 'lanes': 3}),
     ]
     
     for u, v, attrs in edges:
@@ -110,17 +109,10 @@ def intersection_network():
 @pytest.fixture
 def vehicle_types_config():
     """Standard vehicle type configurations from prototype."""
-    from enum import Enum
-    
-    class VehicleType(Enum):
-        CAR = "car"
-        BUS = "bus" 
-        MOTO = "moto"
-    
     return {
-        VehicleType.CAR:  {'speed_factor': 1.0, 'noise_factor': 1.0, 'size_cells': 1},
-        VehicleType.BUS:  {'speed_factor': 0.55, 'noise_factor': 0.6, 'size_cells': 2}, 
-        VehicleType.MOTO: {'speed_factor': 1.25, 'noise_factor': 1.5, 'size_cells': 1},
+        'car': {'speed_factor': 1.0, 'noise_factor': 1.0, 'size_cells': 1},
+        'bus': {'speed_factor': 0.55, 'noise_factor': 0.6, 'size_cells': 2},
+        'moto': {'speed_factor': 1.25, 'noise_factor': 1.5, 'size_cells': 1},
     }
 
 

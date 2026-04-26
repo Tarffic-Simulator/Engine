@@ -40,6 +40,19 @@ class MongoSimulationSessionRepository:
         document = self._collection.find_one({"session_id": session_id})
         return self._from_document(document)
 
+    def list_sessions(self, status: Optional[str], limit: int) -> List[Dict[str, Any]]:
+        """Return recent session documents filtered by optional status."""
+        query: Dict[str, Any] = {}
+        if status is not None:
+            query["status"] = status
+
+        cursor = self._collection.find(
+            query,
+            sort=[("created_at", DESCENDING)],
+            limit=limit,
+        )
+        return [self._from_document(document) or {} for document in cursor]
+
     def update_session_status(self, session_id: str, status: str, updated_at: Any) -> None:
         """Update session lifecycle status."""
         self._collection.update_one(
@@ -117,6 +130,15 @@ class MongoSimulationRunRepository:
         )
         return self._from_document(document)
 
+    def list_runs_for_session(self, session_id: str, limit: int) -> List[Dict[str, Any]]:
+        """Return recent runs for one session in descending creation order."""
+        cursor = self._collection.find(
+            {"session_id": session_id},
+            sort=[("created_at", DESCENDING)],
+            limit=limit,
+        )
+        return [self._from_document(document) or {} for document in cursor]
+
     def mark_run_started(self, run_id: str, started_at: Any, worker_id: str) -> None:
         """Mark a run as started by a worker."""
         self._collection.update_one(
@@ -154,6 +176,7 @@ class MongoSimulationRunRepository:
         """Create indexes used by realtime run queries."""
         self._collection.create_index([("run_id", ASCENDING)], unique=True)
         self._collection.create_index([("session_id", ASCENDING), ("created_at", DESCENDING)])
+        self._collection.create_index([("session_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)])
         self._collection.create_index([("status", ASCENDING), ("created_at", DESCENDING)])
 
     def _from_document(self, document: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

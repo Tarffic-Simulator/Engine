@@ -8,6 +8,9 @@ import inspect
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
+from traffic_engine.infrastructure.runtime.manager_backed_simulation_model import (
+    ManagerBackedSimulationModel,
+)
 
 def _instantiate_use_case(use_case_cls: type, dependencies: Dict[str, Any]) -> Any:
     init_signature = inspect.signature(use_case_cls.__init__)
@@ -235,6 +238,42 @@ class _FakeSimulationModel:
 
     async def step_async(self) -> Tuple[Dict[str, Any], Dict[str, Any], bool]:
         return self.step()
+
+
+class _FakeCreateSimulationResponse:
+    def __init__(self, simulation_id: str) -> None:
+        self.success = True
+        self.simulation_id = simulation_id
+        self.error = ""
+
+
+class _FakeStepSimulationResponse:
+    def __init__(self, tick_number: int) -> None:
+        self.success = True
+        self.new_tick = tick_number
+        self.metrics = {"tick": tick_number}
+        self.error = ""
+
+
+class _TrackingSimulationManager:
+    def __init__(self) -> None:
+        self.created_simulation_ids: List[str] = []
+        self.step_simulation_ids: List[str] = []
+
+    def create_simulation(self, request: Any) -> Any:
+        simulation_id = f"sim-{len(self.created_simulation_ids) + 1}"
+        self.created_simulation_ids.append(simulation_id)
+        return _FakeCreateSimulationResponse(simulation_id=simulation_id)
+
+    def step_simulation(self, simulation_id: str, request: Any) -> Any:
+        self.step_simulation_ids.append(simulation_id)
+        return _FakeStepSimulationResponse(tick_number=len(self.step_simulation_ids))
+
+    def get_snapshot(self, simulation_id: str, request: Any) -> Any:
+        return {
+            "success": True,
+            "snapshot": {"tick_owner_simulation_id": simulation_id},
+        }
 
 
 class TestRealtimeRunExecutionService:
@@ -503,3 +542,131 @@ class TestRealtimeRunExecutionService:
                 },
             },
         }
+
+
+class TestRealtimeRunExtensionService:
+    """Behavior tests for extending a finished realtime session with a new run."""
+
+    def test_extend_finished_session_creates_new_run_without_session_recreate_or_upsert(
+        self,
+        realtime_symbol_loader,
+    ) -> None:
+        # Arrange
+        use_case_cls = realtime_symbol_loader(
+            "traffic_engine.application.use_cases.extend_realtime_session",
+            "ExtendRealtimeSessionUseCase",
+        )
+
+        class _TrackingSessionRepository(_FakeSessionRepository):
+            def __init__(self) -> None:
+                super().__init__()
+                self.upsert_calls: List[Dict[str, Any]] = []
+
+            def upsert_session(self, session: Dict[str, Any]) -> Dict[str, Any]:
+                self.upsert_calls.append(dict(session))
+                self.sessions[session["session_id"]] = dict(session)
+                return dict(session)
+
+        now = datetime.now(timezone.utc)
+        session_repository = _TrackingSessionRepository()
+        run_repository = _FakeRunRepository()
+        tick_repository = _FakeTickRepository(ordering_log=[])
+        run_executor = _FakeRunExecutor()
+
+        session_repository.create_session(
+            {
+                "session_id": "session-finished-001",
+                "created_at": now,
+                "updated_at": now,
+                "status": "completed",
+                "simulation_parameters": {
+                    "area": "Roma Norte, Ciudad de Mexico",
+                    "max_ticks": 3,
+                },
+                "latest_run_id": "run-finished-001",
+                "latest_tick": 3,
+            }
+        )
+        run_repository.create_run(
+            {
+                "run_id": "run-finished-001",
+                "session_id": "session-finished-001",
+                "created_at": now,
+                "status": "completed",
+                "runtime": {"mode": "realtime", "max_ticks": 3},
+                "completed_at": now,
+            }
+        )
+        use_case = _instantiate_use_case(
+            use_case_cls,
+            {
+                "session_repository": session_repository,
+                "run_repository": run_repository,
+                "tick_repository": tick_repository,
+                "run_executor": run_executor,
+                "executor": run_executor,
+            },
+        )
+
+        # Act
+        result = _invoke_use_case(
+            use_case,
+            ("execute", "extend", "__call__"),
+            session_id="session-finished-001",
+            n_steps=5,
+            runtime={"tick_interval_ms": 0},
+        )
+
+        # Assert
+        assert (
+            len(session_repository.created_sessions),
+            len(session_repository.upsert_calls),
+            len(run_repository.created_runs),
+            run_repository.created_runs[-1]["session_id"],
+            result.get("session_id"),
+            result.get("run_id") != "run-finished-001",
+        ) == (
+            1,
+            0,
+            2,
+            "session-finished-001",
+            "session-finished-001",
+            True,
+        )
+
+
+class TestRealtimeRuntimeAdapterIsolation:
+    """Regression contracts for realtime adapter session/run isolation."""
+
+    def test_manager_backed_adapter_when_two_sessions_are_initialized_uses_distinct_simulation_ids(
+        self,
+    ) -> None:
+        """Independent sessions should map to independent underlying simulation identifiers."""
+        # Arrange
+        simulation_manager = _TrackingSimulationManager()
+        adapter = ManagerBackedSimulationModel(simulation_manager=simulation_manager)
+
+        # Act
+        adapter.initialize_session(
+            session_id="session-realtime-001",
+            simulation_parameters={"area": "Roma Norte", "config": {}},
+        )
+        first_state, _, _ = adapter.step()
+        adapter.initialize_session(
+            session_id="session-realtime-002",
+            simulation_parameters={"area": "Condesa", "config": {}},
+        )
+        second_state, _, _ = adapter.step()
+
+        # Assert
+        assert (
+            simulation_manager.created_simulation_ids,
+            simulation_manager.step_simulation_ids,
+            first_state.get("tick_owner_simulation_id"),
+            second_state.get("tick_owner_simulation_id"),
+        ) == (
+            ["sim-1", "sim-2"],
+            ["sim-1", "sim-2"],
+            "sim-1",
+            "sim-2",
+        )

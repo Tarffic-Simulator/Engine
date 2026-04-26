@@ -1,6 +1,6 @@
 # Local MongoDB Setup
 
-This repository now includes a local MongoDB setup for realtime simulation session persistence. The initial design stores session metadata, execution runs, and per-tick history in separate collections so reconnecting clients can recover history without relying on in-memory state.
+MongoDB is the durable store behind the persisted realtime workflow. Session metadata, run history, and per-tick replay state live here so clients can browse history, replay completed runs, and attach to live execution without depending on process memory.
 
 ## Startup
 
@@ -9,87 +9,83 @@ cp .env.example .env
 docker compose up -d mongodb
 ```
 
-To stop the local database:
+Shutdown commands:
 
 ```bash
 docker compose down
-```
-
-To stop it and remove the persisted volume:
-
-```bash
 docker compose down -v
 ```
 
-## Environment Variables
+## Required Environment
 
-| Variable | Required | Purpose |
+| Variable | Purpose |
+| --- | --- |
+| `MONGODB_URI` | Full MongoDB client URI used by the Python persistence layer |
+| `MONGODB_DATABASE` | Selected application database |
+| `MONGODB_APP_NAME` | Optional client app name for diagnostics |
+| `MONGO_ROOT_USER`, `MONGO_ROOT_PASSWORD` | Local container bootstrap credentials |
+| `MONGO_APP_DATABASE`, `MONGO_APP_USER`, `MONGO_APP_PASSWORD` | Least-privilege application database and user |
+| `MONGO_PORT` | Optional exposed host port; defaults to `27017` |
+
+## Collection Topology
+
+```mermaid
+flowchart LR
+    Session[simulation_sessions] --> Run[simulation_runs]
+    Run --> Tick[simulation_ticks]
+```
+
+| Collection | Stores | Notes |
 | --- | --- | --- |
-| `MONGO_ROOT_USER` | Yes for Docker init | Root username used only by the local container bootstrap and healthcheck |
-| `MONGO_ROOT_PASSWORD` | Yes for Docker init | Root password used only by the local container bootstrap and healthcheck |
-| `MONGO_INITDB_DATABASE` | Yes for Docker init | Initial database for the entrypoint bootstrap; keep this as `admin` locally |
-| `MONGO_APP_DATABASE` | Yes | Application database that stores traffic-engine documents |
-| `MONGO_APP_USER` | Yes | Least-privilege application user created by the init script |
-| `MONGO_APP_PASSWORD` | Yes | Password for the application user |
-| `MONGO_PORT` | Optional | Host port exposed for local development; defaults to `27017` |
-| `MONGODB_URI` | Yes for Python | Full client URI consumed by the Python connection helper |
-| `MONGODB_DATABASE` | Yes for Python | Database name selected by the Python connection helper |
-| `MONGODB_APP_NAME` | Optional | MongoDB client app name for telemetry and diagnostics |
+| `simulation_sessions` | One document per public realtime session | Tracks `latest_run_id`, `latest_tick`, and `latest_metrics` for dashboards and reconnects |
+| `simulation_runs` | One document per execution attempt | Extension creates a new run under the same session |
+| `simulation_ticks` | One document per persisted tick | Immutable replay history; written before live publication |
 
-## Connection Defaults
+## Lifecycle Mapping
 
-The example URI uses conservative client settings for the current assumption set: one local MongoDB container, one FastAPI process, and moderate development concurrency.
+MongoDB stores internal lifecycle values. Public HTTP responses and canonical WebSocket status events normalize them before exposing them to clients.
 
-- `maxPoolSize=20`: lower than the PyMongo default because the initial local workload is a single API process and one MongoDB node.
-- `minPoolSize=0`: avoids holding idle sockets open in development.
-- `maxIdleTimeMS=60000`: trims idle connections after one minute to keep the local footprint small.
-- `connectTimeoutMS=5000` and `serverSelectionTimeoutMS=5000`: fail fast when MongoDB is not running.
-- `socketTimeoutMS=10000`: enough headroom for local CRUD operations without masking hangs for too long.
-- `waitQueueTimeoutMS=2000`: surfaces pool pressure quickly if the local assumptions stop holding.
-
-These values are intentionally conservative and should be tuned with monitoring once production concurrency and latency are known.
-
-## Collections and Rationale
-
-| Collection | Purpose | Design Choice |
+| Public contract | Session values stored in MongoDB | Run values stored in MongoDB |
 | --- | --- | --- |
-| `simulation_sessions` | Stores client-visible session metadata, normalized parameters, latest run pointer, and latest summary metrics | One document per session keeps reconnect lookups cheap |
-| `simulation_runs` | Stores each background execution attempt for a session, including runtime metadata and terminal errors | Separate collection avoids overwriting execution history when a session is restarted |
-| `simulation_ticks` | Stores one document per persisted tick with metrics and an optional reduced snapshot | Separate high-frequency collection avoids unbounded arrays and the 16MB document limit |
-
-`simulation_ticks` is intentionally a regular collection rather than a time-series collection for this first local setup. The main access pattern is deterministic replay by `session_id`, `run_id`, and `tick_number`, and the initial implementation may need idempotent per-tick upserts keyed by run and tick. If the payload becomes strictly append-only and write-heavy in production, revisiting a native time-series collection is reasonable.
+| `pending` | `pending` | `queued` |
+| `running` | `running`, `paused` | `running` |
+| `finished` | `completed` | `completed` |
+| `failed` | `failed` | `failed` |
+| `cancelled` | `cancelled` | `cancelled` |
 
 ## Indexes
 
 | Collection | Fields | Type | Reason |
 | --- | --- | --- | --- |
-| `simulation_sessions` | `session_id` | Unique | Public session lookup and reconnect path |
-| `simulation_sessions` | `status, updated_at` | Compound | List recent active or terminal sessions by lifecycle state |
-| `simulation_sessions` | `created_at` | Standard | Recent-session administration and debugging |
-| `simulation_runs` | `run_id` | Unique | Direct run lookup and tracing |
-| `simulation_runs` | `session_id, created_at` | Compound | Fetch run history for a session in reverse chronological order |
-| `simulation_runs` | `status, created_at` | Compound | Find queued or running executions for operators or schedulers |
-| `simulation_ticks` | `run_id, tick_number` | Unique compound | Idempotent per-tick persistence and ordered run replay |
-| `simulation_ticks` | `session_id, recorded_at` | Compound | Stream history back to reconnecting clients by time |
-| `simulation_ticks` | `session_id, run_id, tick_number` | Compound | Ordered session/run recovery with a selective prefix |
+| `simulation_sessions` | `session_id` | Unique | Public session lookup |
+| `simulation_sessions` | `status, updated_at` | Compound | Dashboard filtering by public lifecycle state and recent updates |
+| `simulation_sessions` | `created_at` | Standard | Recent-session debugging and administration |
+| `simulation_runs` | `run_id` | Unique | Direct run lookup |
+| `simulation_runs` | `session_id, created_at` | Compound | Session run history in reverse chronological order |
+| `simulation_runs` | `session_id, status, created_at` | Compound | Prevent multiple active runs per session and list status-filtered history |
+| `simulation_runs` | `status, created_at` | Compound | Operator scans for queued or running executions |
+| `simulation_ticks` | `run_id, tick_number` | Unique compound | Idempotent per-run tick persistence |
+| `simulation_ticks` | `session_id, recorded_at` | Compound | Time-ordered recovery for one session |
+| `simulation_ticks` | `session_id, run_id, tick_number` | Compound | Ordered replay by session, run, and cursor |
 
-## Python Connection Artifact
+## Runtime Notes
 
-The minimal env-driven connection helper lives in `src/traffic_engine/infrastructure/persistence/mongodb.py`.
-
-- It requires `MONGODB_URI` and `MONGODB_DATABASE`.
-- It sets a client app name from `MONGODB_APP_NAME`.
-- Realtime repositories consume it when `api/realtime_router.py` composes the Mongo-backed service graph.
-- `api/app.py` shutdown closes the cached client after executor shutdown.
-
-## Current Wiring Scope
-
-| Component | Current Behavior |
+| Topic | Current behavior |
 | --- | --- |
-| `MongoSimulationSessionRepository` | Persists `simulation_sessions` and updates latest tick metadata |
-| `MongoSimulationRunRepository` | Persists `simulation_runs` and run lifecycle transitions |
-| `MongoSimulationTickRepository` | Persists immutable `simulation_ticks` and serves replay reads |
-| `api/realtime_router.py` | Lazily composes Mongo repositories, executor, and SSE replay use case |
-| `api/app.py` shutdown | Closes the cached MongoDB client via `close_mongo_client()` |
+| Tick durability | Each tick is appended to `simulation_ticks` before it is published to live consumers |
+| Replay source of truth | `GET /realtime/sessions/{session_id}/ticks` and `WS /realtime/sessions/{session_id}/ws` both replay from MongoDB first |
+| Session extension | `POST /realtime/sessions/{session_id}/runs` creates a new run document; earlier runs and ticks remain immutable |
+| Local executor | The default local adapter is `InProcessRunExecutor`; MongoDB owns persistence, not scheduling |
+| Collection type | `simulation_ticks` is a regular collection, not a time-series collection, because the access pattern is keyed replay by `session_id`, `run_id`, and `tick_number` |
 
-This setup is active for realtime routes now. What remains as future work is scaling execution beyond the current in-process local/dev executor.
+## Current Wiring
+
+| Component | Behavior |
+| --- | --- |
+| `MongoSimulationSessionRepository` | Persists session metadata and latest tick summary |
+| `MongoSimulationRunRepository` | Persists run lifecycle changes and run history |
+| `MongoSimulationTickRepository` | Persists immutable tick history and serves replay queries |
+| `realtime_router.py` | Lazily composes Mongo repositories, the in-process executor, WebSocket replay, and SSE compatibility replay |
+| `api.app` shutdown | Closes the cached MongoDB client |
+
+MongoDB currently covers realtime persistence only. The planned geographic topology cache remains a separate concern and is documented in `docs/GEOGRAPHIC_CATALOG.md`.

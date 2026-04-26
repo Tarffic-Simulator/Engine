@@ -15,7 +15,7 @@ Traffic Engine is a layered Python service that turns OpenStreetMap road data in
 
 ```mermaid
 flowchart LR
-    Client[Client or Dashboard] --> API[api\nFastAPI endpoints\nrequest/response models]
+    Client[HTTP or WebSocket Client] --> API[api\nFastAPI endpoints\nrequest/response models]
     API --> Manager[SimulationManager\nsession lifecycle]
     Manager --> UseCases[application.use_cases\ncreate step metrics snapshot]
     UseCases --> Domain[domain.simulation\nNaSchSimulationModel]
@@ -108,21 +108,24 @@ sequenceDiagram
 
 ## Realtime Session Extension (Implemented)
 
-Realtime session support is now implemented with MongoDB persistence and SSE replay/follow behavior.
+Realtime session support is now implemented with MongoDB persistence and canonical WebSocket replay/follow behavior.
 
 ### Current Scope Coverage
 
 1. Create realtime sessions from simulation parameters.
 2. Dispatch execution in background without blocking API requests.
 3. Persist session metadata, execution runs, and immutable per-tick documents in MongoDB.
-4. Replay persisted ticks and optionally continue with live SSE events.
+4. Replay persisted ticks and optionally continue with live WebSocket events.
+5. Extend finished sessions by creating a new run under the same session.
 
 ### Current Transport Contract
 
-1. SSE endpoint replays ticks with tick_number greater than the reconnect cursor.
-2. Last-Event-ID takes precedence over from_tick when parseable.
-3. Tick event id values are numeric tick cursors.
-4. Terminal events end the follow stream.
+1. Canonical live endpoint is WebSocket at /realtime/sessions/{session_id}/ws with run_id, from_tick, and follow inputs.
+2. Replay sends ticks with tick_number greater than from_tick in ascending order.
+3. With follow=true, replay continues with live events and closes on terminal run_status.
+4. Public lifecycle states are normalized to pending, running, finished, failed, and cancelled.
+5. Extension endpoint /realtime/sessions/{session_id}/runs creates a new run and must not recreate or upsert the session document.
+6. SSE stream endpoint remains as compatibility transport during migration windows.
 
 ### Current Runtime and Persistence Ownership
 
@@ -134,7 +137,7 @@ Realtime session support is now implemented with MongoDB persistence and SSE rep
 ### PIPELINE-011 Close-out Status
 
 1. src/traffic_engine/infrastructure/runtime/manager_backed_simulation_model.py now depends on the application-owned SimulationRuntimeGateway contract and no longer imports API modules.
-2. Terminal run_status SSE events now publish numeric cursor ids derived from the last persisted tick.
+2. Terminal run_status events publish numeric cursor ids derived from the last persisted tick.
 3. api/app.py shutdown now closes infrastructure MongoDB client lifecycle helpers after realtime executor shutdown.
 4. In-process execution remains the default local/dev adapter, while worker-backed RunExecutor replacement is tracked as future backlog and is not part of the active PIPELINE-011 TODO set.
 

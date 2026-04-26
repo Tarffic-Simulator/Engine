@@ -1,7 +1,7 @@
 ---
 description: "Use when: documenting Python modules, classes, or functions, generating project-level documentation, creating architecture overviews, writing README files, documenting APIs or interfaces, explaining data flows or component relationships, producing onboarding docs for new developers, or any task where clear and structured Python project documentation is needed."
 name: "Python Docs Architect"
-tools: [vscode, execute, read, edit, search, web]
+tools: [vscode, execute, read, edit, search, web, browser, 'gitkraken/*', 'pylance-mcp-server/*', vscode.mermaid-chat-features/renderMermaidDiagram, cweijan.vscode-database-client2/dbclient-getDatabases, cweijan.vscode-database-client2/dbclient-getTables, cweijan.vscode-database-client2/dbclient-executeQuery, ms-azuretools.vscode-containers/containerToolsConfig, ms-python.python/getPythonEnvironmentInfo, ms-python.python/getPythonExecutableCommand, ms-python.python/installPythonPackage, ms-python.python/configurePythonEnvironment, ms-toolsai.jupyter/configureNotebook, ms-toolsai.jupyter/listNotebookPackages, ms-toolsai.jupyter/installNotebookPackages, vscjava.vscode-java-debug/debugJavaApplication, vscjava.vscode-java-debug/setJavaBreakpoint, vscjava.vscode-java-debug/debugStepOperation, vscjava.vscode-java-debug/getDebugVariables, vscjava.vscode-java-debug/getDebugStackTrace, vscjava.vscode-java-debug/evaluateDebugExpression, vscjava.vscode-java-debug/getDebugThreads, vscjava.vscode-java-debug/removeJavaBreakpoints, vscjava.vscode-java-debug/stopDebugSession, vscjava.vscode-java-debug/getDebugSessionInfo, todo]
 argument-hint: "Describe what needs to be documented: a module, class, feature, architecture decision, or the full project."
 model: GPT-5.4 (copilot)
 ---

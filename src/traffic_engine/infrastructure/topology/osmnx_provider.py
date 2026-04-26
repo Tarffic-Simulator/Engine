@@ -6,7 +6,7 @@ road network data from OpenStreetMap, with appropriate error handling
 and import guards for optional dependencies.
 """
 
-from typing import Optional
+from typing import Any, Callable, Optional
 import logging
 
 # Import guard for optional dependencies
@@ -24,6 +24,34 @@ from ...application.contracts import TopologyProvider
 from .topology_converter import TopologyConverter
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_add_edge_lengths() -> Callable[..., Any]:
+    """Return the OSMnx edge-length helper across supported API layouts."""
+    add_edge_lengths = getattr(ox, 'add_edge_lengths', None)
+    if callable(add_edge_lengths):
+        return add_edge_lengths
+
+    distance_module = getattr(ox, 'distance', None)
+    add_edge_lengths = getattr(distance_module, 'add_edge_lengths', None)
+    if callable(add_edge_lengths):
+        return add_edge_lengths
+
+    raise AttributeError("OSMnx installation does not expose add_edge_lengths.")
+
+
+def _resolve_add_edge_speeds() -> Callable[..., Any]:
+    """Return the OSMnx edge-speed helper across supported API layouts."""
+    add_edge_speeds = getattr(ox, 'add_edge_speeds', None)
+    if callable(add_edge_speeds):
+        return add_edge_speeds
+
+    routing_module = getattr(ox, 'routing', None)
+    add_edge_speeds = getattr(routing_module, 'add_edge_speeds', None)
+    if callable(add_edge_speeds):
+        return add_edge_speeds
+
+    raise AttributeError("OSMnx installation does not expose add_edge_speeds.")
 
 
 class OSMnxTopologyProvider:
@@ -154,11 +182,14 @@ class OSMnxTopologyProvider:
         Returns:
             Graph with required attributes for simulation
         """
+        add_edge_lengths = _resolve_add_edge_lengths()
+        add_edge_speeds = _resolve_add_edge_speeds()
+
         # Add edge lengths if missing
-        graph = ox.add_edge_lengths(graph)
+        graph = add_edge_lengths(graph)
         
         # Add speed attributes if missing
-        graph = ox.add_edge_speeds(graph)
+        graph = add_edge_speeds(graph)
         
         # Ensure all edges have required attributes
         for u, v, key in graph.edges(keys=True):

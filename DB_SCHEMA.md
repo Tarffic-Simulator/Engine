@@ -1,67 +1,85 @@
 # Database Schema
 
-## Collections
+## Collection Relationships
 
-| Collection | Purpose | Embed / Reference |
-| ---------- | ------- | ----------------- |
-| `simulation_sessions` | Stores persistent session metadata, normalized parameters, latest status, and latest summary metrics | Top-level session document; references runs by `latest_run_id` |
-| `simulation_runs` | Stores each realtime execution attempt for a session and its runtime status | References owning session by `session_id` |
-| `simulation_ticks` | Stores immutable per-tick history for replay and client reconnect | References owning session and run by `session_id` and `run_id` |
+```mermaid
+flowchart LR
+    Session[simulation_sessions] --> Run[simulation_runs]
+    Run --> Tick[simulation_ticks]
+```
 
-## Schema Per Collection
+| Collection | Cardinality | Mutability |
+| --- | --- | --- |
+| `simulation_sessions` | One per public realtime session | Mutable summary document; keeps latest run and latest tick pointers |
+| `simulation_runs` | One per execution attempt | New document for each extension run; lifecycle timestamps update in place |
+| `simulation_ticks` | One per persisted tick | Immutable replay history |
 
-### `simulation_sessions`
+## Lifecycle Semantics
+
+The database stores internal lifecycle values. Public HTTP responses and the canonical WebSocket contract normalize them before exposing them to clients.
+
+| Layer | Pending | Running | Finished | Failed | Cancelled |
+| --- | --- | --- | --- | --- | --- |
+| Session values stored in MongoDB | `pending` | `running`, `paused` | `completed` | `failed` | `cancelled` |
+| Run values stored in MongoDB | `queued` | `running` | `completed` | `failed` | `cancelled` |
+| Public contract | `pending` | `running` | `finished` | `failed` | `cancelled` |
+
+## `simulation_sessions`
 
 | Field | Type | Required | Description |
-| ----- | ---- | -------- | ----------- |
-| `_id` | `string` | Yes | Application-defined session identifier used as the primary key |
-| `session_id` | `string` | Yes | Stable public identifier used by API clients |
+| --- | --- | --- | --- |
+| `_id` | `string` | Yes | Application-defined primary key |
+| `session_id` | `string` | Yes | Stable public session identifier |
 | `created_at` | `date` | Yes | UTC creation timestamp |
-| `updated_at` | `date` | Yes | UTC timestamp of the latest metadata update |
-| `status` | `string` | Yes | Lifecycle state for the session: `pending`, `running`, `paused`, `completed`, `failed`, or `cancelled` |
-| `area` | `string \| null` | No | Human-readable area or simulation label |
-| `simulation_parameters` | `object` | Yes | Normalized client-defined parameters for the simulation |
-| `latest_run_id` | `string \| null` | No | Most recent execution identifier for reconnect or debugging |
-| `latest_tick` | `int \| long \| null` | No | Highest persisted tick number |
-| `latest_metrics` | `object \| null` | No | Small metrics snapshot used to bootstrap dashboards after reconnect |
+| `updated_at` | `date` | Yes | UTC timestamp of the latest metadata change |
+| `status` | `string` | Yes | Internal session lifecycle: `pending`, `running`, `paused`, `completed`, `failed`, or `cancelled` |
+| `simulation_parameters` | `object` | Yes | Normalized simulation parameters captured for the session |
+| `latest_run_id` | `string \| null` | No | Most recent run identifier |
+| `latest_tick` | `int \| long \| null` | No | Highest persisted tick number across the latest run |
+| `latest_metrics` | `object \| null` | No | Compact metrics summary used by dashboards and reconnect flows |
 
-### `simulation_runs`
-
-| Field | Type | Required | Description |
-| ----- | ---- | -------- | ----------- |
-| `_id` | `string` | Yes | Application-defined run identifier used as the primary key |
-| `run_id` | `string` | Yes | Stable public execution identifier |
-| `session_id` | `string` | Yes | Owning simulation session identifier |
-| `created_at` | `date` | Yes | UTC creation timestamp for the run document |
-| `started_at` | `date \| null` | No | UTC timestamp when background execution started |
-| `completed_at` | `date \| null` | No | UTC timestamp when the run completed or failed |
-| `status` | `string` | Yes | Run lifecycle state: `queued`, `running`, `completed`, `failed`, or `cancelled` |
-| `runtime` | `object` | Yes | Runtime settings for the execution, including realtime mode and tick cadence |
-| `parameters_snapshot` | `object \| null` | No | Immutable copy of effective parameters used for the run |
-| `error` | `object \| null` | No | Structured terminal error details |
-
-### `simulation_ticks`
+## `simulation_runs`
 
 | Field | Type | Required | Description |
-| ----- | ---- | -------- | ----------- |
-| `session_id` | `string` | Yes | Owning session identifier duplicated for direct history recovery |
+| --- | --- | --- | --- |
+| `_id` | `string` | Yes | Application-defined primary key |
+| `run_id` | `string` | Yes | Stable public run identifier |
+| `session_id` | `string` | Yes | Owning session identifier |
+| `created_at` | `date` | Yes | UTC creation timestamp |
+| `started_at` | `date \| null` | No | UTC timestamp when background execution starts |
+| `completed_at` | `date \| null` | No | UTC timestamp when the run finishes or fails |
+| `status` | `string` | Yes | Internal run lifecycle: `queued`, `running`, `completed`, `failed`, or `cancelled` |
+| `runtime` | `object` | Yes | Persisted runtime configuration for this run |
+| `parameters_snapshot` | `object \| null` | No | Immutable parameter snapshot for the run |
+| `error` | `object \| null` | No | Structured terminal error payload |
+
+Each extension creates a new `simulation_runs` document. Previous runs are not rewritten or removed.
+
+## `simulation_ticks`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `session_id` | `string` | Yes | Owning session identifier |
 | `run_id` | `string` | Yes | Execution identifier that produced the tick |
-| `tick_number` | `int \| long` | Yes | Monotonic tick number within the run |
+| `tick_number` | `int \| long` | Yes | Monotonic cursor within the run |
 | `recorded_at` | `date` | Yes | UTC persistence timestamp |
-| `metrics` | `object` | Yes | Compact metrics payload for realtime dashboards and history replay |
-| `snapshot` | `object \| null` | No | Reduced simulation snapshot for reconnect and visualization |
-| `events` | `array \| null` | No | Optional bounded annotations for notable tick events |
+| `metrics` | `object` | Yes | Compact metrics payload for replay and dashboards |
+| `snapshot` | `object \| null` | No | Visualization payload captured for the tick |
+| `events` | `array \| null` | No | Tick-local annotations |
+
+Ticks are appended before live publication, so replay and live follow share the same durable history.
 
 ## Indexes
 
 | Collection | Fields | Type | Reason |
-| ---------- | ------ | ---- | ------ |
-| `simulation_sessions` | `session_id` | Unique | Primary session lookup for client reconnect |
-| `simulation_sessions` | `status, updated_at` | Compound | List recent sessions by lifecycle state |
-| `simulation_sessions` | `created_at` | Standard | Recent-session debugging and administration |
-| `simulation_runs` | `run_id` | Unique | Direct run lookup and traceability |
-| `simulation_runs` | `session_id, created_at` | Compound | Session run history in chronological order |
-| `simulation_runs` | `status, created_at` | Compound | Operational queries for queued or running executions |
-| `simulation_ticks` | `run_id, tick_number` | Unique compound | Idempotent tick persistence and ordered replay |
-| `simulation_ticks` | `session_id, recorded_at` | Compound | Time-ordered history lookup after client reconnect |
-| `simulation_ticks` | `session_id, run_id, tick_number` | Compound | Ordered recovery for a session and a specific execution |
+| --- | --- | --- | --- |
+| `simulation_sessions` | `session_id` | Unique | Session lookup |
+| `simulation_sessions` | `status, updated_at` | Compound | Public lifecycle filtering and recent-session dashboards |
+| `simulation_sessions` | `created_at` | Standard | Recent-session administration |
+| `simulation_runs` | `run_id` | Unique | Direct run lookup |
+| `simulation_runs` | `session_id, created_at` | Compound | Run history for a session |
+| `simulation_runs` | `session_id, status, created_at` | Compound | Active-run guard and status-filtered history |
+| `simulation_runs` | `status, created_at` | Compound | Operator scans for active executions |
+| `simulation_ticks` | `run_id, tick_number` | Unique compound | Idempotent tick persistence |
+| `simulation_ticks` | `session_id, recorded_at` | Compound | Time-ordered session recovery |
+| `simulation_ticks` | `session_id, run_id, tick_number` | Compound | Ordered replay by session, run, and cursor |

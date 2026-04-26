@@ -2,9 +2,9 @@
 
 ## Audience
 
-This guide is for developers onboarding to the repository and maintainers making changes to the API, simulation model, or providers.
+This guide is for developers running the active repository scope locally: MongoDB, the FastAPI service, the persisted realtime workflow, and the focused validation slices for core and API behavior.
 
-## Quick Start
+## Bootstrap
 
 ```bash
 cd /home/erick/Desktop/github/Engine
@@ -14,102 +14,87 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-## Run the API
+See [MONGODB_LOCAL.md](./MONGODB_LOCAL.md) for environment variables, collections, and indexes.
 
-```bash
-uvicorn traffic_engine.api.app:app --reload
+## Local Services
+
+| Service | Command | Default URL |
+| --- | --- | --- |
+| MongoDB | `cp .env.example .env && docker compose up -d mongodb` | `mongodb://...` from `.env` |
+| FastAPI public API | `uvicorn traffic_engine.api.app:app --reload` | `http://localhost:8000` |
+| OpenAPI docs | `started by FastAPI` | `http://localhost:8000/docs` |
+
+## Local Runtime Topology
+
+```mermaid
+flowchart LR
+  Client[HTTP or WebSocket client] --> API[FastAPI public API :8000]
+  API --> Sync[SimulationManager]
+  API --> Realtime[Realtime use cases]
+  Realtime --> Mongo[(MongoDB)]
+  Realtime --> Exec[InProcessRunExecutor]
+  Realtime --> Broker[InMemoryTickStreamBroker]
 ```
 
-Open `http://127.0.0.1:8000/docs` for the generated OpenAPI UI.
+## End-To-End Local Workflow
 
-## Run Local MongoDB
-
-```bash
-cp .env.example .env
-docker compose up -d mongodb
-```
-
-See `docs/MONGODB_LOCAL.md` for the collection design, connection variables, and validation details.
-
-## Run Realtime Locally
+### 1. Verify service health and realtime availability
 
 ```bash
-cp .env.example .env
-docker compose up -d mongodb
-uvicorn traffic_engine.api.app:app --reload
+curl http://localhost:8000/health
+curl http://localhost:8000/realtime/status
 ```
 
-Use `POST /realtime/sessions` to create a session and the returned `stream_url` to consume SSE recovery or follow mode.
+Expect `status: healthy` and `available: true` before testing create, replay, or extension.
 
-## Run Tests
+### 2. Create a persisted realtime session
+
+```bash
+curl -X POST http://localhost:8000/realtime/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "area": "Roma Norte, Ciudad de Mexico",
+    "runtime": {"mode": "realtime", "tick_interval_ms": 100, "max_ticks": 20}
+  }'
+```
+
+Capture the returned `session_id`, `run_id`, and `websocket_url`.
+
+### 3. Inspect persisted sessions, runs, and ticks
+
+```bash
+curl http://localhost:8000/realtime/sessions
+curl http://localhost:8000/realtime/sessions/$SESSION_ID/runs
+curl "http://localhost:8000/realtime/sessions/$SESSION_ID/ticks?run_id=$RUN_ID&from_tick=-1&limit=5"
+```
+
+Use [CONSUME_SERVICE.md](./CONSUME_SERVICE.md) for Python examples that open the canonical WebSocket and iterate replay-plus-follow events.
+
+### 4. Extend a finished session with a new run
+
+```bash
+curl -X POST http://localhost:8000/realtime/sessions/$SESSION_ID/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"n_steps": 20}'
+```
+
+The extension creates a new `run_id` under the same `session_id`. It does not recreate the session document.
+
+## Focused Validation
 
 | Goal | Command |
 | --- | --- |
-| Full suite | `pytest tests/ -v` |
-| Coverage | `pytest tests/ --cov=src/traffic_engine --cov-report=html` |
-| API slice | `pytest tests/test_api_layer.py -v` |
-| Simulation slice | `pytest tests/test_nasch_simulation.py -v` |
-| Use-case slice | `pytest tests/test_use_cases.py -v` |
+| Realtime API, WebSocket, execution, and persistence slice | `.venv/bin/python -m pytest tests/test_realtime_api_contracts.py tests/test_realtime_websocket_contracts.py tests/test_realtime_run_execution.py tests/test_realtime_repository_contracts.py -q` |
+| Realtime compatibility and lane-aware payload slice | `.venv/bin/python -m pytest tests/test_realtime_sse_recovery.py tests/test_realtime_lane_payload_contracts.py tests/test_snapshot_lane_payloads.py -q` |
+| Core simulation and multilane domain slice | `.venv/bin/python -m pytest tests/test_domain_models.py tests/test_nasch_simulation.py tests/test_multilane_cellular_grid.py tests/test_multilane_topology_converter.py tests/test_lane_change_policy.py tests/test_public_transport_behavior.py -q` |
+| API boundary smoke slice | `.venv/bin/python -m pytest tests/test_api_layer.py tests/test_real_engine_smoke.py -q` |
 
-## Repository Shape
+## Troubleshooting
 
-| Path | What Lives There |
-| --- | --- |
-| `src/traffic_engine/api/` | FastAPI app, public schemas, sync manager, and realtime router |
-| `src/traffic_engine/application/` | Contracts and use-case orchestration |
-| `src/traffic_engine/domain/` | Domain models and NaSch simulation engine |
-| `src/traffic_engine/infrastructure/` | OSMnx graph loading, Mongo persistence, runtime, realtime broker, and traffic-light providers |
-| `tests/` | Contract and behavior tests |
-| `core/` | Prototype notebooks and scripts kept for reference |
-| Root `*.md` files | Earlier planning, ADRs, coverage, and migration notes |
-
-## Development Conventions
-
-| Convention | Current Practice |
-| --- | --- |
-| Architecture | Keep business logic in `domain`, orchestration in `application`, adapters in `infrastructure`, HTTP in `api` |
-| Public API contracts | Use Pydantic request/response models in `api/models` |
-| Internal use-case contracts | Use dataclass DTOs and protocols in `application/contracts` |
-| Simulation abstractions | Program against `SimulationModel` and provider protocols when possible |
-| Physical constants | Keep defaults centralized in `src/traffic_engine/config/constants.py` |
-| Optional heavy libs | Guard OSMnx and NetworkX imports inside infrastructure modules |
-
-## Tooling and Config
-
-| Tool | Source |
-| --- | --- |
-| Packaging | `pyproject.toml` with setuptools backend |
-| Python baseline | `>=3.8` |
-| Formatting | `black` and `isort` settings in `pyproject.toml` |
-| Typing | strict `mypy` settings in `pyproject.toml` |
-| Test discovery | `pytest.ini` and `[tool.pytest.ini_options]` in `pyproject.toml` |
-
-## Useful Markers
-
-| Marker | Meaning |
-| --- | --- |
-| `unit` | Small isolated tests |
-| `integration` | Cross-component tests |
-| `api` | API layer tests |
-| `domain` | Domain model and logic tests |
-| `providers` | Provider and adapter tests |
-| `simulation` | NaSch simulation tests |
-| `slow` | Longer-running tests |
-
-## Practical Notes
-
-| Topic | Note |
-| --- | --- |
-| OSM-backed simulation creation | Requires OSMnx dependencies and network access |
-| Synchronous session lifecycle | `SimulationManager` keeps in-memory instances for `/simulations` routes only |
-| Realtime session lifecycle | `/realtime` persists session, run, and tick state in MongoDB and replays ticks over SSE |
-| Local realtime runtime | The default local/dev adapter is `InProcessRunExecutor`; it is intentionally replaceable |
-| Prototype parity | Root planning docs aim to preserve prototype behavior while moving code into `src/traffic_engine` |
-
-## Reading Order
-
-1. `README.md`
-2. `docs/ARCHITECTURE.md`
-3. `docs/API.md`
-4. `docs/SIMULATION.md`
-5. `DECISIONS.md`
+| Symptom | Likely cause | Check |
+| --- | --- | --- |
+| `/realtime/status` returns `available: false` | MongoDB or environment is not configured | Re-read `.env` and [MONGODB_LOCAL.md](./MONGODB_LOCAL.md) |
+| `POST /realtime/sessions` returns 503 | The realtime service container could not compose persistence dependencies | Confirm MongoDB is running and `.env` points to the expected database |
+| No sessions are returned from `/realtime/sessions` | The API is not writing to MongoDB yet or you are filtering too aggressively | Retry without a `status` filter and confirm session creation is succeeding |
+| WebSocket follow closes immediately | The selected run already reached a terminal state | Inspect `/realtime/sessions/$SESSION_ID/runs` and choose an active run or start a new session |
+| Tick replay appears truncated | Pagination window is too small for the run you are inspecting | Repeat `/ticks` with the last received `tick_number` as `from_tick` |

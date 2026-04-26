@@ -55,3 +55,25 @@ class CreateRealtimeSessionRequest(BaseModel):
             "config": dict(self.config),
             "max_ticks": self.runtime.max_ticks,
         }
+
+
+class ExtendRealtimeRunRequest(BaseModel):
+    """Request body for extending a finished realtime session with a new run."""
+
+    n_steps: int = Field(..., ge=1, description="Number of additional ticks to execute.")
+    tick_interval_ms: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Optional delay between ticks for the extension run.",
+    )
+    run_id: Optional[str] = Field(default=None, description="Optional client-supplied run identifier.")
+    mode: Optional[str] = Field(default=None, description="Optional execution mode override.")
+
+    def to_runtime(self) -> Dict[str, Any]:
+        """Return normalized runtime overrides for the extension run."""
+        runtime: Dict[str, Any] = {"max_ticks": self.n_steps}
+        if self.tick_interval_ms is not None:
+            runtime["tick_interval_ms"] = self.tick_interval_ms
+        if self.mode is not None:
+            runtime["mode"] = self.mode
+        return runtime

@@ -2,7 +2,7 @@
 description: "Use when: designing system architecture, creating file structure plans for new features, reviewing architectural impact of requirements, writing ADRs (Architecture Decision Records), defining layer boundaries and dependency rules, detecting architectural violations, updating ARCHITECTURE.md or WORK_PLAN.md, planning implementation order for the development team."
 model: GPT-5.3-Codex (copilot)
 name: "Python Software Architect"
-tools: [read, edit, search, todo]
+tools: [vscode, execute, read, edit, search, web, browser, 'gitkraken/*', 'pylance-mcp-server/*', vscode.mermaid-chat-features/renderMermaidDiagram, cweijan.vscode-database-client2/dbclient-getDatabases, cweijan.vscode-database-client2/dbclient-getTables, cweijan.vscode-database-client2/dbclient-executeQuery, ms-azuretools.vscode-containers/containerToolsConfig, ms-python.python/getPythonEnvironmentInfo, ms-python.python/getPythonExecutableCommand, ms-python.python/installPythonPackage, ms-python.python/configurePythonEnvironment, ms-toolsai.jupyter/configureNotebook, ms-toolsai.jupyter/listNotebookPackages, ms-toolsai.jupyter/installNotebookPackages, vscjava.vscode-java-debug/debugJavaApplication, vscjava.vscode-java-debug/setJavaBreakpoint, vscjava.vscode-java-debug/debugStepOperation, vscjava.vscode-java-debug/getDebugVariables, vscjava.vscode-java-debug/getDebugStackTrace, vscjava.vscode-java-debug/evaluateDebugExpression, vscjava.vscode-java-debug/getDebugThreads, vscjava.vscode-java-debug/removeJavaBreakpoints, vscjava.vscode-java-debug/stopDebugSession, vscjava.vscode-java-debug/getDebugSessionInfo, todo]
 argument-hint: "Describe the new requirement or modification to plan. Include any known constraints or existing architecture context."
 ---
 

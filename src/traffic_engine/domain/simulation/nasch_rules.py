@@ -6,7 +6,7 @@ testable traffic simulation based on the prototype implementation.
 """
 
 import numpy as np
-from typing import Dict, Tuple
+from typing import Dict
 from ..models import Vehicle, EdgeId
 from ...config.constants import CELL_SIZE_M, V_MAX_CELLS
 
@@ -108,7 +108,7 @@ def nasch_rule_4_movement(current_position: int, final_velocity: int) -> int:
     return current_position + final_velocity
 
 
-def calculate_gap_same_edge(edge_cells: np.ndarray, vehicle_position: int) -> int:
+def calculate_gap_same_edge(edge_cells: np.ndarray, vehicle_position: int, lane_index: int = 0) -> int:
     """
     Calculate gap to next vehicle on same edge.
     
@@ -119,12 +119,13 @@ def calculate_gap_same_edge(edge_cells: np.ndarray, vehicle_position: int) -> in
     Returns:
         Number of free cells ahead before next vehicle or end of edge
     """
-    edge_length = len(edge_cells)
+    lane_cells = _resolve_lane_cells(edge_cells=edge_cells, lane_index=lane_index)
+    edge_length = len(lane_cells)
     
     # Search ahead for next obstacle
     for distance in range(1, edge_length - vehicle_position):
         check_pos = vehicle_position + distance
-        if edge_cells[check_pos] != 0:  # Found vehicle
+        if lane_cells[check_pos] != 0:  # Found vehicle
             return distance - 1
     
     # No vehicle found, gap extends to end of edge
@@ -134,7 +135,9 @@ def calculate_gap_same_edge(edge_cells: np.ndarray, vehicle_position: int) -> in
 def calculate_gap_cross_edge(
     current_edge_cells: np.ndarray,
     current_position: int,
-    next_edge_cells: np.ndarray
+    next_edge_cells: np.ndarray,
+    current_lane_index: int = 0,
+    next_lane_index: int = 0,
 ) -> int:
     """
     Calculate gap that spans across edge boundary.
@@ -147,13 +150,22 @@ def calculate_gap_cross_edge(
     Returns:
         Total gap spanning both edges
     """
+    current_lane_cells = _resolve_lane_cells(
+        edge_cells=current_edge_cells,
+        lane_index=current_lane_index,
+    )
+    next_lane_cells = _resolve_lane_cells(
+        edge_cells=next_edge_cells,
+        lane_index=next_lane_index,
+    )
+
     # Gap to end of current edge
-    current_edge_length = len(current_edge_cells)
+    current_edge_length = len(current_lane_cells)
     gap_to_end = (current_edge_length - 1) - current_position
     
     # Gap at beginning of next edge
     gap_in_next = 0
-    for i, cell in enumerate(next_edge_cells):
+    for _, cell in enumerate(next_lane_cells):
         if cell != 0:  # Found vehicle
             break
         gap_in_next += 1
@@ -183,6 +195,7 @@ def apply_nasch_rules(
     """
     # Get vehicle parameters
     current_edge = vehicle.current_edge
+    current_lane_index = int(getattr(vehicle, 'lane_index', 0))
     vmax_base = edge_vmax[current_edge]
     vehicle_config = vehicle.get_config()
     
@@ -193,12 +206,18 @@ def apply_nasch_rules(
     velocity = nasch_rule_1_acceleration(vehicle.velocity, effective_vmax)
     
     # Rule 2: Braking (gap calculation)
-    gap = calculate_gap_same_edge(edge_cells[current_edge], vehicle.cell_pos)
+    gap = calculate_gap_same_edge(
+        edge_cells=edge_cells[current_edge],
+        vehicle_position=vehicle.cell_pos,
+        lane_index=current_lane_index,
+    )
     
     # Traffic light constraint: can't proceed beyond edge if light is red
     if not traffic_light_green and vehicle.next_edge is not None:
         # Limit gap to edge boundary
-        current_edge_length = len(edge_cells[current_edge])
+        current_edge_length = len(
+            _resolve_lane_cells(edge_cells=edge_cells[current_edge], lane_index=current_lane_index)
+        )
         gap_to_boundary = (current_edge_length - 1) - vehicle.cell_pos
         gap = min(gap, gap_to_boundary)
     
@@ -209,7 +228,9 @@ def apply_nasch_rules(
             total_gap = calculate_gap_cross_edge(
                 edge_cells[current_edge], 
                 vehicle.cell_pos,
-                edge_cells[next_edge]
+                edge_cells[next_edge],
+                current_lane_index=current_lane_index,
+                next_lane_index=current_lane_index,
             )
             gap = total_gap
     
@@ -219,3 +240,15 @@ def apply_nasch_rules(
     velocity = nasch_rule_3_randomization(velocity, vehicle.noise_prob, rng)
     
     return velocity
+
+
+def _resolve_lane_cells(edge_cells: np.ndarray, lane_index: int) -> np.ndarray:
+    """Return a 1D lane slice for both 1D and 2D occupancy arrays."""
+    if edge_cells.ndim == 1:
+        return edge_cells
+
+    if edge_cells.ndim == 2:
+        bounded_lane = max(0, min(lane_index, edge_cells.shape[0] - 1))
+        return edge_cells[bounded_lane]
+
+    raise ValueError(f"Unsupported edge occupancy dimensions: {edge_cells.ndim}")

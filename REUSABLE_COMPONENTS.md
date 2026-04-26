@@ -1,84 +1,42 @@
 # Reusable Components
 
-This file tracks components with reuse potential across the Traffic Engine project.
+This file tracks components with reuse potential across the active Traffic Engine scope.
 
-## Core Domain Models
+Last updated: 2026-04-26
 
-### VehicleState (src/traffic_engine/domain/models/vehicles.py)
+## Domain and Application Reuse Map
 
-**Problem it solves**: Standardized representation of vehicle state for API responses and visualization.
+| Component | Location | Problem it solves | How to reuse or extend |
+| --- | --- | --- | --- |
+| NaSch simulation core | `src/traffic_engine/domain/simulation/nasch_model.py` | Provides deterministic reset/step behavior over topology-backed cellular state. | Reuse directly for smoke tests, experiments, or alternate service adapters that need the same domain engine. |
+| Lane-aware snapshot serialization | `src/traffic_engine/application/use_cases/get_snapshot.py` | Converts domain state into additive vehicle, light, and edge payloads suitable for API and realtime replay. | Extend this boundary when new visualization or analytics fields are needed without exposing domain internals. |
+| Public lifecycle normalization helpers | `src/traffic_engine/application/contracts/realtime_entities.py` | Maps internal lifecycle terms to the public contract vocabulary used by HTTP and WebSocket consumers. | Reuse from any new API response model, filter, or streaming adapter that surfaces realtime status. |
+| ExtendRealtimeSessionUseCase | `src/traffic_engine/application/use_cases/extend_realtime_session.py` | Creates a new run under a finished session while preventing concurrent active-run conflicts. | Reuse from future admin tooling or alternate runtime adapters that need restart or extension semantics. |
+| StreamRealtimeEventsUseCase | `src/traffic_engine/application/use_cases/stream_realtime_events.py` | Replays persisted ticks and follows live broker events through one transport-neutral envelope shape. | Reuse from WebSocket handlers, compatibility transports, or CLI watchers without importing FastAPI primitives. |
 
-**How to reuse/extend**: Can be extended with additional fields for more detailed vehicle tracking. The dataclass structure makes it easy to serialize/deserialize for different output formats.
+## Infrastructure Reuse Map
 
-### Metrics (src/traffic_engine/domain/models/simulation_state.py)  
+| Component | Location | Problem it solves | How to reuse or extend |
+| --- | --- | --- | --- |
+| Mongo realtime repositories | `src/traffic_engine/infrastructure/persistence/mongo_realtime_repositories.py` | Stores sessions, runs, and ticks in separate collections with replay-friendly queries. | Extend here for retention jobs, reporting queries, or new repository methods without leaking MongoDB logic upward. |
+| InProcessRunExecutor | `src/traffic_engine/infrastructure/runtime/in_process_run_executor.py` | Schedules realtime runs asynchronously behind the `RunExecutor` contract for local/dev execution. | Replace with a worker-backed adapter that preserves the same `submit` and `shutdown` surface. |
+| ManagerBackedSimulationModel | `src/traffic_engine/infrastructure/runtime/manager_backed_simulation_model.py` | Bridges the existing synchronous manager path into the realtime runtime without exposing API modules to application code. | Reuse the same pattern when wrapping another stateful synchronous engine behind a smaller application-owned gateway. |
+| OSMnx helper resolution bridge | `src/traffic_engine/infrastructure/topology/osmnx_provider.py` | Shields topology loading from OSMnx helper namespace drift across versions. | Apply the same boundary pattern to other third-party integrations whose helper locations change over time. |
+| `close_mongo_client` lifecycle guard | `src/traffic_engine/infrastructure/persistence/mongodb.py` | Makes MongoDB client shutdown idempotent across API, tests, and local tooling. | Reuse whenever startup/shutdown paths need safe cached-client teardown. |
 
-**Problem it solves**: Consistent aggregated metrics collection across different simulation implementations.
+## API and Test Reuse Map
 
-**How to reuse/extend**: Fields can be added for new KPIs. The structure supports both real-time monitoring and historical analysis.
+| Component | Location | Problem it solves | How to reuse or extend |
+| --- | --- | --- | --- |
+| API DTO translation helpers | `src/traffic_engine/api/app.py` | Converts Pydantic request models into application DTOs without coupling transport schemas to internal dataclasses. | Follow the same translation pattern for any new endpoint that should keep transport and application contracts separate. |
+| SimulationManager | `src/traffic_engine/api/simulation_manager.py` | Owns UUID-scoped synchronous simulation lifecycle and isolates concurrent simulation state. | Reuse the same management pattern for other stateful engine surfaces that need bounded instance tracking. |
+| Real engine smoke test | `tests/test_real_engine_smoke.py` | Validates the installed package with a narrow real-module execution path instead of mocks. | Add future runtime assertions here before widening to broader integration slices. |
+| Physical configuration fixtures | `tests/conftest.py` and `tests/test_physical_config.py` | Provide stable config and topology test data for low-cost validation of conversion helpers. | Reuse when adding new provider or physical-parameter tests that need small deterministic graphs. |
 
-### SimulationState (src/traffic_engine/domain/models/simulation_state.py)
+## Notes
 
-**Problem it solves**: Complete snapshot of simulation state at any point in time.
-
-**How to reuse/extend**: Can be extended with additional state components. Useful for state persistence, replay functionality, and debugging.
-
-## Infrastructure Components
-
-### OSMnxTopologyProvider (src/traffic_engine/infrastructure/topology/osmnx_provider.py)
-
-**Problem it solves**: Loads real road network data from OpenStreetMap via OSMnx.
-
-**How to reuse/extend**: Can be extended to support different geographic queries, caching strategies, or custom road network filters.
-
-### SimulationManager (src/traffic_engine/api/simulation_manager.py)
-
-**Problem it solves**: Manages multiple concurrent simulation instances with automatic cleanup and resource management.
-
-**How to reuse/extend**: The pattern can be applied to other stateful services needing instance management. Cleanup policies and resource limits are configurable.
-
-## Application Layer Components
-
-### Use Case Pattern (src/traffic_engine/application/use_cases/)
-
-**Problem it solves**: Encapsulates business logic in discrete, testable operations following clean architecture principles.
-
-**How to reuse/extend**: The pattern can be extended for new simulation operations. Each use case is self-contained with clear input/output contracts.
-
-### Contract DTOs (src/traffic_engine/application/contracts/simulation_dto.py)
-
-**Problem it solves**: Clean separation between API layer and application layer with type-safe data transfer objects.
-
-**How to reuse/extend**: New request/response types can follow the same dataclass pattern. Validation can be added through `__post_init__` methods.
-
-## API Components
-
-### FastAPI Application Structure (src/traffic_engine/api/app.py)
-
-**Problem it solves**: RESTful API with automatic OpenAPI documentation and request validation.
-
-**How to reuse/extend**: The endpoint patterns can be extended for new simulation operations. CORS and middleware configuration is centralized.
-
-## 2026-04-24 Iteration 1
-
-### API DTO Translation (src/traffic_engine/api/app.py)
-
-**Problem it solves**: Converts public FastAPI Pydantic models into internal application DTOs without coupling the API layer to dataclass contracts.
-
-**How to reuse/extend**: Additional endpoints can follow the same translation pattern to keep API schemas stable while application internals evolve.
-
-### NaSch Simulation Core (src/traffic_engine/domain/simulation/nasch_model.py)
-
-**Problem it solves**: Provides a reusable NaSch simulation engine with deterministic reset and step behavior over TopologyData inputs.
-
-**How to reuse/extend**: Small topologies can use the same model directly for smoke tests, CLI experiments, or future service adapters.
-
-### Real Engine Smoke Test (tests/test_real_engine_smoke.py)
-
-**Problem it solves**: Validates the generated package with a minimal real-module integration check instead of mocks.
-
-**How to reuse/extend**: Future migration slices can add narrow runtime assertions here before widening to broader suite coverage.
-
-## 2026-04-24 Iteration 2
+1. This document tracks only components that still exist in the active repository scope.
+2. Historical client-UI components were removed from the active reuse map during the documentation synchronization step.
 
 ### Snapshot DTO Validation Path (src/traffic_engine/api/app.py)
 
@@ -118,6 +76,14 @@ This file tracks components with reuse potential across the Traffic Engine proje
 
 **Problem it solves**: Schedules realtime runs asynchronously behind a replaceable executor contract for local and development execution.
 
+## 2026-04-25 Iteration 9
+
+### Snapshot Simulation Test Double (tests/test_snapshot_lane_payloads.py)
+
+**Problem it solves**: Provides a deterministic snapshot fixture whose vehicle and edge state can be mutated in-place so serialization contracts can verify lane-aware shape changes.
+
+**How to reuse/extend**: Additional snapshot contract tests can extend the same fake with new edge or vehicle attributes instead of rebuilding bespoke simulation stubs for each payload variation.
+
 **How to reuse/extend**: A worker-backed executor can implement the same `submit` and `shutdown` surface while preserving API and application use cases.
 
 ## 2026-04-24 Iteration 6
@@ -133,3 +99,25 @@ This file tracks components with reuse potential across the Traffic Engine proje
 **Problem it solves**: Makes MongoDB client shutdown idempotent so API lifecycle hooks can safely release cached clients without forcing initialization or crashing when Mongo was never opened.
 
 **How to reuse/extend**: Other startup and shutdown paths can call the same helper directly whenever they need safe cached-client teardown across tests, CLIs, or alternate web entry points.
+
+## 2026-04-25 Iteration 7
+
+### GetSnapshotUseCase lane-aware payload serialization (src/traffic_engine/application/use_cases/get_snapshot.py)
+
+**Problem it solves**: Preserves additive multicarril and rendering metadata such as `lane_index`, `lateral_offset_m`, `render_label`, `render_color`, `n_lanes`, and `occupancy_cells_lane_major` in snapshot payloads consumed by the dashboard and realtime persistence.
+
+**How to reuse/extend**: Future visualization-only fields can be added in the same serialization boundary without changing the domain state model or breaking backward-compatible payload consumers.
+
+### ManagerBackedSimulationModel snapshot normalization (src/traffic_engine/infrastructure/runtime/manager_backed_simulation_model.py)
+
+**Problem it solves**: Normalizes legacy manager snapshot responses so realtime execution returns the full post-step state needed by persistence and SSE contracts, not only tick counters.
+
+**How to reuse/extend**: Other runtime adapters can reuse the same pattern when they need to bridge between object-based and dict-based manager facades while keeping the application-facing state contract stable.
+
+## 2026-04-25 Iteration 8
+
+### NaSch gap helpers (src/traffic_engine/domain/simulation/nasch_rules.py)
+
+**Problem it solves**: Keeps same-edge and cross-edge gap calculations small and deterministic for the core NaSch rule application path.
+
+**How to reuse/extend**: Future movement or lane-selection rules can keep calling the same helpers as long as they continue to operate on resolved lane occupancy arrays instead of transport-layer payloads.

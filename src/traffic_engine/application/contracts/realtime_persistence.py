@@ -15,6 +15,9 @@ class SimulationSessionRepository(Protocol):
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Return a session document by identifier."""
 
+    def list_sessions(self, status: Optional[str], limit: int) -> List[Dict[str, Any]]:
+        """Return recent session documents filtered by optional lifecycle status."""
+
     def update_session_status(self, session_id: str, status: str, updated_at: datetime) -> None:
         """Update the lifecycle status for a session."""
 
@@ -40,6 +43,9 @@ class SimulationRunRepository(Protocol):
 
     def get_active_run_for_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Return the active queued or running run for a session, if any."""
+
+    def list_runs_for_session(self, session_id: str, limit: int) -> List[Dict[str, Any]]:
+        """Return recent runs for one session in descending creation order."""
 
     def mark_run_started(self, run_id: str, started_at: datetime, worker_id: str) -> None:
         """Mark a run as started by a worker."""

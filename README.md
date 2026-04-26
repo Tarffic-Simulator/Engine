@@ -8,9 +8,19 @@ Simulador de tráfico urbano basado en autómatas celulares (modelo Nagel-Schrec
 
 - Motor NaSch con topologías OSM y semáforos configurables en `src/traffic_engine/`
 - API HTTP de simulación síncrona con FastAPI
-- Sesiones realtime con ejecución en segundo plano, persistencia MongoDB y replay/follow por SSE
-- Docker Compose local para MongoDB con colecciones e índices de `simulation_sessions`, `simulation_runs` y `simulation_ticks`
-- Suite de pruebas para dominio, API, contratos realtime y persistencia
+- Sesiones realtime persistidas con ejecución en segundo plano, replay/follow por WebSocket canónico y compatibilidad SSE
+- Persistencia MongoDB para `simulation_sessions`, `simulation_runs` y `simulation_ticks`
+- Docker Compose local para el stack de desarrollo
+- Suite de pruebas para dominio, API, contratos realtime, persistencia y payloads lane-aware
+
+### Alcance Activo del Repositorio
+
+| Superficie | Estado | Nota |
+| --- | --- | --- |
+| Core de simulación | Activo | Dominio NaSch, topología, reglas multicarril y semáforos |
+| API FastAPI | Activa | Endpoints síncronos y realtime sobre el mismo núcleo de dominio |
+| Persistencia realtime | Activa | MongoDB y repositorios para sesiones, runs y ticks |
+| Cliente visual integrado | Fuera de alcance | Los consumidores externos deben usar la API pública documentada en `docs/CONSUME_SERVICE.md` |
 
 ### Trabajo Futuro
 
@@ -20,26 +30,16 @@ Simulador de tráfico urbano basado en autómatas celulares (modelo Nagel-Schrec
 
 ## Estructura del Proyecto
 
-### Código Prototipo (preservado)
-
-```text
-core/
-├── grafo_vial_cdmx.ipynb          # Carga datos OSMnx topología CDMX
-├── 02_automata_celular.ipynb      # Modelo NaSch + discretización
-├── 03_semaforos.ipynb             # Sistema semáforos por centralidad
-├── 06_sim_mejorada.py             # Tipos vehículos heterogéneos
-├── 07_flujo_entrada_salida.py     # Flujo boundary + timeout
-└── dashboard.py                   # Dashboard Streamlit interactivo
-```
-
-### Arquitectura Actual
-
 ```text
 src/traffic_engine/                # Motor limpio para producción
 ├── domain/                        # Lógica NaSch + entidades
-├── application/                   # Casos de uso + orquestación
+├── application/                   # Casos de uso + contratos
 ├── infrastructure/                # Adaptadores OSMnx, MongoDB, runtime y streaming
 └── api/                           # API FastAPI síncrona + realtime
+
+docs/                              # Guías operativas y de consumo
+tests/                             # Suite de regresión para core, API y realtime
+docker/mongo/                      # Soporte local para MongoDB
 ```
 
 ## Funcionalidades Clave
@@ -47,61 +47,52 @@ src/traffic_engine/                # Motor limpio para producción
 ### Simulación NaSch
 
 - **4 reglas sincrónicas**: aceleración, frenado, ruido estocástico, movimiento
-- **Discretización realista**: celdas 5.0m, velocidades hasta 60 km/h
-- **Tipos vehículos**: carro/bus/moto con comportamientos diferenciados
-- **Flujo dinámico**: vehículos entran/salen por nodos frontera
+- **Discretización realista**: celdas de 5.0 m y velocidades hasta 60 km/h
+- **Tipos de vehículo**: carro, bus y moto con comportamientos diferenciados
+- **Flujo dinámico**: vehículos entran y salen por nodos frontera
 
 ### Red Vial CDMX
 
 - **Datos reales**: OpenStreetMap vía OSMnx
-- **Topología**: MultiDiGraph dirigido con velocidades por arista
-- **Escalabilidad**: desde colonias (~2k nodos) hasta ciudad completa (~150k)
+- **Topología**: `MultiDiGraph` dirigido con velocidades por arista
+- **Escalabilidad**: desde colonias hasta áreas urbanas extensas
 
 ### Sistema de Semáforos
 
-- **Ubicación inteligente**: por betweenness centrality de intersecciones
-- **Fases NS/EW**: según orientación geográfica de calles
+- **Ubicación configurable**: proveedores fijos o por centralidad
+- **Fases NS/EW**: definidas por orientación geográfica de las calles
 - **Olas verdes**: offset configurable entre semáforos adyacentes
 
 ### API REST y Realtime
 
 - **Simulaciones múltiples**: gestión concurrente por UUID con `SimulationManager`
 - **Métricas en tiempo real**: velocidad, densidad, throughput y congestión
-- **Snapshots detallados**: posiciones de vehículos y estado de semáforos
-- **Sesiones realtime**: creación de sesión, ejecución en background y stream SSE con recuperación
+- **Snapshots detallados**: posiciones de vehículos, estado de semáforos y payload lane-aware
+- **Sesiones realtime**: creación, ejecución en background, persistencia, replay y follow
+- **Consumo externo**: clientes HTTP/WebSocket sobre contratos públicos, sin frontend activo dentro del repositorio
 
 ## Documentación Arquitectónica
 
-- **[DECISIONS.md](DECISIONS.md)**: Decisiones de diseño y justificaciones técnicas
-- **[WORK_PLAN.md](WORK_PLAN.md)**: Plan detallado de migración y estructura de archivos
-- **[ARCHITECTURE.md](ARCHITECTURE.md)**: Visión general y patrones arquitectónicos
-- **[PIPELINES.md](PIPELINES.md)**: Workflows de desarrollo y pipeline actual
-- **[docs/CONSUME_SERVICE.md](docs/CONSUME_SERVICE.md)**: Guía detallada para consumir la API desde clientes Python, incluyendo SSE realtime
+- **[DECISIONS.md](DECISIONS.md)**: decisiones de diseño activas para core y API
+- **[WORK_PLAN.md](WORK_PLAN.md)**: backlog operativo actual y slices de validación
+- **[ARCHITECTURE.md](ARCHITECTURE.md)**: arquitectura fuente de verdad del repositorio
+- **[PIPELINES.md](PIPELINES.md)**: workflows de desarrollo y pipeline actual
+- **[docs/CONSUME_SERVICE.md](docs/CONSUME_SERVICE.md)**: ejemplos Python para consumir la API HTTP/WebSocket
 
-## Desarrollo
+## Desarrollo Local
 
-### Código Prototipo (actual)
-
-```bash
-cd core/
-source .venv/bin/activate
-
-# Simulación básica
-python 06_sim_mejorada.py
-
-# Con flujo entrada/salida  
-python 07_flujo_entrada_salida.py
-
-# Dashboard interactivo
-streamlit run dashboard.py
-```
-
-### API REST y realtime
+### API REST y runtime realtime
 
 ```bash
 cd /home/erick/Desktop/github/Engine
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+cp .env.example .env
+docker compose up -d mongodb
 uvicorn traffic_engine.api.app:app --reload
-# → http://localhost:8000/docs
+# -> http://localhost:8000/docs
 ```
 
 Endpoints principales:
@@ -113,39 +104,33 @@ Endpoints principales:
 | `GET` | `/simulations/{simulation_id}/metrics` | Leer métricas agregadas |
 | `GET` | `/simulations/{simulation_id}/snapshot` | Leer snapshot detallado |
 | `POST` | `/realtime/sessions` | Crear sesión realtime persistida |
-| `GET` | `/realtime/sessions/{session_id}/stream` | Replay y follow SSE por `run_id` |
+| `POST` | `/realtime/sessions/{session_id}/runs` | Extender una sesión finalizada con un nuevo run |
+| `GET` | `/realtime/sessions/{session_id}/ticks` | Leer historial persistido de ticks |
+| `GET` | `/realtime/sessions/{session_id}/ws` | Replay y follow WebSocket canónico por `run_id` |
+| `GET` | `/realtime/sessions/{session_id}/stream` | Compatibilidad SSE para clientes heredados |
 
-Para ejecutar la ruta realtime localmente también necesitas MongoDB:
-
-```bash
-cp .env.example .env
-docker compose up -d mongodb
-```
+Para ejemplos de consumo por clientes externos, ver `docs/CONSUME_SERVICE.md` y `docs/API.md`.
 
 ## Stack Tecnológico
 
-### Preservado del prototipo
+### Núcleo y runtime
 
 - **Python 3.8+**
 - **NumPy**: arrays para celdas y cálculos vectorizados
-- **NetworkX**: representación grafo vial MultiDiGraph
+- **NetworkX**: representación del grafo vial `MultiDiGraph`
 - **OSMnx**: descarga y procesamiento OpenStreetMap
-- **Matplotlib**: visualización estática simulaciones
+- **PyMongo**: persistencia de sesiones realtime y ticks
 
-### Nuevo para arquitectura limpia
+### Servicio y calidad
 
 - **FastAPI**: framework web async con tipado
-- **Pydantic**: validación y serialización datos API
-- **PyMongo**: persistencia de sesiones realtime y ticks
+- **Pydantic**: validación y serialización de contratos API
+- **uvicorn**: servidor ASGI para desarrollo local
+- **pytest**: test suite para dominio, API y realtime
 - **setuptools**: packaging definido en `pyproject.toml`
-- **pytest**: testing framework con fixtures
 
 ## Contribución
 
-Proyecto sigue pipeline estructurado con agentes especializados:
+El proyecto sigue un pipeline estructurado con agentes especializados para decisiones, TDD e implementación.
 
-1. **Python Software Architect**: Decisiones arquitectónicas y planificación
-2. **Python TDD**: Generación test suite comprehensive
-3. **Python Architect**: Implementación siguiendo TDD
-
-Ver [PIPELINES.md](PIPELINES.md) para detalles del workflow y [docs/INDEX.md](docs/INDEX.md) para la documentación operativa actual.
+Ver [PIPELINES.md](PIPELINES.md) para el workflow y [docs/INDEX.md](docs/INDEX.md) para la documentación operativa actual.

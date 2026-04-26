@@ -176,6 +176,70 @@ class NaSchSimulationModel:
     def get_metrics(self) -> Metrics:
         """Get current simulation metrics (public interface)."""
         return self._calculate_metrics()
+
+    def get_edge_states(self) -> Dict[EdgeId, Dict[str, Any]]:
+        """Return per-edge occupancy and physical state for snapshot payloads.
+
+        Returns:
+            Dictionary keyed by edge identifier with lane-aware occupancy,
+            density, speed, flow, and physical edge metadata. Returns an
+            empty mapping when the simulation has not been initialized yet.
+        """
+        if self.topology is None or self.grid is None:
+            return {}
+
+        vehicle_speeds_kph = {
+            vehicle_id: round(vehicle.velocity * CELL_SIZE_M * 3.6 / TICK_SECONDS, 1)
+            for vehicle_id, vehicle in self.vehicles.items()
+        }
+
+        edge_states: Dict[EdgeId, Dict[str, Any]] = {}
+        for edge_id, edge_data in self.topology.edges.items():
+            edge_cells = self.grid.get_edge_cells(edge_id)
+            occupancy_cells_lane_major = edge_cells.astype(int).tolist()
+            occupancy_projection = np.max(edge_cells, axis=0).astype(int)
+            edge_vehicle_ids = occupancy_projection[occupancy_projection > 0].tolist()
+            average_speed = 0.0
+            if edge_vehicle_ids:
+                average_speed = round(
+                    sum(vehicle_speeds_kph.get(vehicle_id, 0.0) for vehicle_id in edge_vehicle_ids)
+                    / len(edge_vehicle_ids),
+                    1,
+                )
+
+            velocity_profile = []
+            for longitudinal_index in range(edge_cells.shape[1]):
+                lane_vehicle_ids = edge_cells[:, longitudinal_index]
+                occupied_vehicle_ids = [
+                    int(vehicle_id)
+                    for vehicle_id in lane_vehicle_ids.tolist()
+                    if int(vehicle_id) > 0
+                ]
+                if occupied_vehicle_ids:
+                    cell_average_speed = round(
+                        sum(vehicle_speeds_kph.get(vehicle_id, 0.0) for vehicle_id in occupied_vehicle_ids)
+                        / len(occupied_vehicle_ids),
+                        1,
+                    )
+                    velocity_profile.append(cell_average_speed)
+                else:
+                    velocity_profile.append(0.0)
+
+            edge_states[edge_id] = {
+                'vehicle_count': self.grid.get_edge_flow(edge_id),
+                'density': round(self.grid.get_edge_density(edge_id), 3),
+                'average_speed': average_speed,
+                'flow': float(self.grid.get_edge_flow(edge_id)),
+                'occupancy_cells': occupancy_projection.tolist(),
+                'velocity_profile': velocity_profile,
+                'n_lanes': self.grid.get_edge_lane_count(edge_id),
+                'occupancy_cells_lane_major': occupancy_cells_lane_major,
+                'length_m': edge_data.length_m,
+                'n_cells': edge_data.n_cells,
+                'max_speed_kph': edge_data.speed_kph,
+            }
+
+        return edge_states
     
     def add_traffic_light(self, light: TrafficLight):
         """Add traffic light to simulation."""

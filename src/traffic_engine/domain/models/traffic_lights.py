@@ -6,7 +6,7 @@ offset-based coordination for green waves, and edge classification by bearing.
 """
 
 from dataclasses import dataclass, field
-from typing import Set, Dict
+from typing import Set
 from .topology import EdgeId, NodeId
 
 
@@ -14,10 +14,10 @@ from .topology import EdgeId, NodeId
 class TrafficLight:
     """
     Traffic light controller for intersection management.
-    
+
     Based on TrafficLight class from prototype with NS/EW phase logic,
     configurable timing, and offset coordination for green wave effects.
-    
+
     Attributes:
         node_id: Intersection node ID where light is located
         cycle_ticks: Total cycle duration in simulation ticks
@@ -32,18 +32,18 @@ class TrafficLight:
     offset_ticks: int = 0
     ns_edges: Set[EdgeId] = field(default_factory=set)
     ew_edges: Set[EdgeId] = field(default_factory=set)
-    
+
     def is_green(self, edge_id: EdgeId, tick: int) -> bool:
         """
         Check if traffic light is green for the given edge at the given tick.
-        
+
         Args:
             edge_id: Edge to check (must be incoming to this intersection)
             tick: Current simulation tick
-            
+
         Returns:
             True if light is green for this edge, False if red
-            
+
         Note:
             - NS edges are green during first part of cycle (0 to green_ratio * cycle)
             - EW edges are green during second part of cycle 
@@ -51,7 +51,7 @@ class TrafficLight:
         """
         phase_tick = (tick + self.offset_ticks) % self.cycle_ticks
         ns_green = phase_tick < int(self.cycle_ticks * self.green_ratio)
-        
+
         if edge_id in self.ns_edges:
             return ns_green
         elif edge_id in self.ew_edges:

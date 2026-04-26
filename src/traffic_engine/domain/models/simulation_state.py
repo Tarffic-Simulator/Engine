@@ -68,7 +68,7 @@ class SnapshotData:
     Detailed simulation snapshot optimized for visualization.
     
     Contains comprehensive state information needed for rendering
-    the simulation in dashboards and analysis tools.
+    the simulation in external clients and analysis tools.
     
     Attributes:
         tick: Current simulation time step

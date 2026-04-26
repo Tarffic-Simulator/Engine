@@ -94,6 +94,8 @@ class StartRealtimeSessionUseCase:
         return {
             "session_id": resolved_session_id,
             "run_id": resolved_run_id,
+            "session_status": session_record.status,
+            "run_status": run_record.status,
             "status": run_record.status,
             "dispatch": dispatch_result,
         }

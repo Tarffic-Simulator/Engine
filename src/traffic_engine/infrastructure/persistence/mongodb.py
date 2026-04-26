@@ -3,6 +3,7 @@
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 try:
     from pymongo import MongoClient
@@ -19,6 +20,24 @@ class MongoSettings:
     app_name: str
 
 
+def _load_local_env_file() -> None:
+    """Load root .env values for local development without overriding the process environment."""
+    env_path = Path(__file__).resolve().parents[4] / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        name, value = line.split("=", 1)
+        name = name.strip()
+        value = value.strip().strip('"').strip("'")
+        if name and name not in os.environ:
+            os.environ[name] = value
+
+
 def _require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
@@ -28,6 +47,7 @@ def _require_env(name: str) -> str:
 
 @lru_cache(maxsize=1)
 def get_mongo_settings() -> MongoSettings:
+    _load_local_env_file()
     return MongoSettings(
         uri=_require_env("MONGODB_URI"),
         database=_require_env("MONGODB_DATABASE"),

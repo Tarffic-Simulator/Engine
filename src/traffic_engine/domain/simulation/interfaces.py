@@ -6,7 +6,7 @@ pluggable simulation engines (NaSch, ML agents, microsimulation, etc.).
 """
 
 from typing import Protocol, Tuple, Dict, Optional, Any
-from ..models import TopologyData, SimulationState, Metrics, SnapshotData
+from ..models import EdgeId, TopologyData, SimulationState, Metrics, SnapshotData
 
 
 class SimulationModel(Protocol):
@@ -19,7 +19,7 @@ class SimulationModel(Protocol):
     
     The interface follows Gymnasium conventions:
     - reset(): Initialize/restart the simulation
-    - step(): Advance simulation by one time step  
+    - step(): Advance simulation by one time step
     - get_observation(): Get detailed state for visualization/analysis
     """
     
@@ -89,6 +89,10 @@ class SimulationModel(Protocol):
     
     def get_metrics(self) -> Metrics:
         """Get current aggregate simulation metrics."""
+        ...
+
+    def get_edge_states(self) -> Dict[EdgeId, Dict[str, Any]]:
+        """Get per-edge snapshot state consumed by visualization payloads."""
         ...
     
     def get_current_tick(self) -> int:

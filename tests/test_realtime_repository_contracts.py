@@ -6,10 +6,12 @@ realtime execution and reconnect recovery.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import importlib
 import inspect
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
@@ -76,6 +78,13 @@ class _InMemorySessionRepository:
         self._sessions[session_id]["latest_metrics"] = dict(latest_metrics)
         self._sessions[session_id]["updated_at"] = updated_at
 
+    def list_sessions(self, status: Optional[str], limit: int) -> List[Dict[str, Any]]:
+        sessions = list(self._sessions.values())
+        if status is not None:
+            sessions = [session for session in sessions if session["status"] == status]
+        sessions.sort(key=lambda item: item["created_at"], reverse=True)
+        return [dict(session) for session in sessions[:limit]]
+
 
 class _InMemoryRunRepository:
     def __init__(self) -> None:
@@ -111,6 +120,15 @@ class _InMemoryRunRepository:
         self._runs[run_id]["status"] = "failed"
         self._runs[run_id]["completed_at"] = completed_at
         self._runs[run_id]["error"] = dict(error)
+
+    def list_runs_for_session(self, session_id: str, limit: int) -> List[Dict[str, Any]]:
+        runs_for_session = [
+            run
+            for run in self._runs.values()
+            if run["session_id"] == session_id
+        ]
+        runs_for_session.sort(key=lambda item: item["created_at"], reverse=True)
+        return [dict(run) for run in runs_for_session[:limit]]
 
 
 class _InMemoryTickRepository:
@@ -158,6 +176,14 @@ def _tick_numbers(ticks: List[Dict[str, Any]]) -> List[int]:
     return [tick["tick_number"] for tick in ticks]
 
 
+def _session_ids(sessions: List[Dict[str, Any]]) -> List[str]:
+    return [session["session_id"] for session in sessions]
+
+
+def _run_ids(runs: List[Dict[str, Any]]) -> List[str]:
+    return [run["run_id"] for run in runs]
+
+
 def _duplicate_attempt_mode(
     repository: _InMemoryTickRepository,
     tick: Dict[str, Any],
@@ -184,6 +210,26 @@ def _find_adapter_class(
 class TestRealtimeRepositoryContracts:
     """Contract tests for repository behavior in realtime session persistence."""
 
+    def test_mongo_settings_loads_repository_env_file_without_exposing_clients_to_env_details(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Arrange
+        module = importlib.import_module("traffic_engine.infrastructure.persistence.mongodb")
+        monkeypatch.delenv("MONGODB_URI", raising=False)
+        monkeypatch.delenv("MONGODB_DATABASE", raising=False)
+        module.get_mongo_settings.cache_clear()
+
+        # Act
+        settings = module.get_mongo_settings()
+
+        # Assert
+        assert (
+            settings.uri.startswith("mongodb://"),
+            settings.database,
+            os.environ.get("MONGODB_URI") == settings.uri,
+        ) == (True, "traffic_engine", True)
+
     def test_realtime_persistence_contract_symbols_are_exported(
         self,
         realtime_symbol_loader,
@@ -207,6 +253,46 @@ class TestRealtimeRepositoryContracts:
             inspect.isclass(session_protocol)
             and inspect.isclass(run_protocol)
             and inspect.isclass(tick_protocol)
+        )
+
+    def test_session_repository_protocol_requires_list_sessions_method(
+        self,
+        realtime_symbol_loader,
+    ) -> None:
+        # Arrange
+        session_protocol = realtime_symbol_loader(
+            "traffic_engine.application.contracts.realtime_persistence",
+            "SimulationSessionRepository",
+        )
+
+        # Act
+        list_sessions_method = getattr(session_protocol, "list_sessions", None)
+
+        # Assert
+        assert callable(list_sessions_method) and tuple(inspect.signature(list_sessions_method).parameters) == (
+            "self",
+            "status",
+            "limit",
+        )
+
+    def test_run_repository_protocol_requires_list_runs_for_session_method(
+        self,
+        realtime_symbol_loader,
+    ) -> None:
+        # Arrange
+        run_protocol = realtime_symbol_loader(
+            "traffic_engine.application.contracts.realtime_persistence",
+            "SimulationRunRepository",
+        )
+
+        # Act
+        list_runs_method = getattr(run_protocol, "list_runs_for_session", None)
+
+        # Assert
+        assert callable(list_runs_method) and tuple(inspect.signature(list_runs_method).parameters) == (
+            "self",
+            "session_id",
+            "limit",
         )
 
     def test_session_repository_creates_session_metadata(self) -> None:
@@ -246,6 +332,82 @@ class TestRealtimeRepositoryContracts:
 
         # Assert
         assert stored == run.__dict__
+
+    def test_session_repository_lists_previous_sessions_filtered_by_status_and_limit(self) -> None:
+        # Arrange
+        repository = _InMemorySessionRepository()
+        now = datetime.now(timezone.utc)
+        repository.create_session(
+            _SessionRecord(
+                session_id="session-old-completed",
+                created_at=now - timedelta(minutes=3),
+                updated_at=now - timedelta(minutes=3),
+                status="completed",
+                simulation_parameters={"initial_vehicles": 4},
+            ).__dict__
+        )
+        repository.create_session(
+            _SessionRecord(
+                session_id="session-running",
+                created_at=now - timedelta(minutes=2),
+                updated_at=now - timedelta(minutes=2),
+                status="running",
+                simulation_parameters={"initial_vehicles": 6},
+            ).__dict__
+        )
+        repository.create_session(
+            _SessionRecord(
+                session_id="session-latest-completed",
+                created_at=now - timedelta(minutes=1),
+                updated_at=now - timedelta(minutes=1),
+                status="completed",
+                simulation_parameters={"initial_vehicles": 8},
+            ).__dict__
+        )
+
+        # Act
+        listed_sessions = repository.list_sessions(status="completed", limit=1)
+
+        # Assert
+        assert _session_ids(listed_sessions) == ["session-latest-completed"]
+
+    def test_run_repository_lists_runs_for_session_in_descending_created_order(self) -> None:
+        # Arrange
+        repository = _InMemoryRunRepository()
+        now = datetime.now(timezone.utc)
+        repository.create_run(
+            _RunRecord(
+                run_id="run-old",
+                session_id="session-realtime-001",
+                created_at=now - timedelta(minutes=3),
+                status="completed",
+                runtime={"mode": "realtime"},
+            ).__dict__
+        )
+        repository.create_run(
+            _RunRecord(
+                run_id="run-newest",
+                session_id="session-realtime-001",
+                created_at=now - timedelta(minutes=1),
+                status="running",
+                runtime={"mode": "realtime"},
+            ).__dict__
+        )
+        repository.create_run(
+            _RunRecord(
+                run_id="run-other-session",
+                session_id="session-realtime-002",
+                created_at=now - timedelta(minutes=2),
+                status="queued",
+                runtime={"mode": "realtime"},
+            ).__dict__
+        )
+
+        # Act
+        listed_runs = repository.list_runs_for_session("session-realtime-001", limit=2)
+
+        # Assert
+        assert _run_ids(listed_runs) == ["run-newest", "run-old"]
 
     def test_tick_repository_persists_ticks_separately_from_session_metadata(self) -> None:
         # Arrange
@@ -384,6 +546,7 @@ class TestRealtimeRepositoryContracts:
                 "get_session",
                 "update_session_status",
                 "update_session_latest_tick",
+                "list_sessions",
             },
         )
         run_adapter = _find_adapter_class(
@@ -395,6 +558,7 @@ class TestRealtimeRepositoryContracts:
                 "mark_run_started",
                 "mark_run_completed",
                 "mark_run_failed",
+                "list_runs_for_session",
             },
         )
         tick_adapter = _find_adapter_class(
@@ -408,3 +572,88 @@ class TestRealtimeRepositoryContracts:
 
         # Assert
         assert session_adapter and run_adapter and tick_adapter
+
+    def test_extension_contract_creates_new_run_without_session_recreate_or_upsert(
+        self,
+        realtime_symbol_loader,
+    ) -> None:
+        # Arrange
+        use_case_cls = realtime_symbol_loader(
+            "traffic_engine.application.use_cases.extend_realtime_session",
+            "ExtendRealtimeSessionUseCase",
+        )
+
+        class _TrackingSessionRepository(_InMemorySessionRepository):
+            def __init__(self) -> None:
+                super().__init__()
+                self.upsert_calls: List[Dict[str, Any]] = []
+
+            def upsert_session(self, session: Dict[str, Any]) -> Dict[str, Any]:
+                self.upsert_calls.append(dict(session))
+                self._sessions[session["session_id"]] = dict(session)
+                return dict(session)
+
+        class _NoopRunExecutor:
+            def submit(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+                return {"accepted": True}
+
+        now = datetime.now(timezone.utc)
+        session_repository = _TrackingSessionRepository()
+        run_repository = _InMemoryRunRepository()
+
+        session_repository.create_session(
+            {
+                "session_id": "session-finished-001",
+                "created_at": now,
+                "updated_at": now,
+                "status": "completed",
+                "simulation_parameters": {
+                    "area": "Roma Norte, Ciudad de Mexico",
+                    "max_ticks": 2,
+                },
+                "latest_run_id": "run-finished-001",
+                "latest_tick": 2,
+            }
+        )
+        run_repository.create_run(
+            {
+                "run_id": "run-finished-001",
+                "session_id": "session-finished-001",
+                "created_at": now,
+                "status": "completed",
+                "runtime": {"mode": "realtime", "max_ticks": 2},
+                "completed_at": now,
+            }
+        )
+
+        init_signature = inspect.signature(use_case_cls.__init__)
+        dependencies = {
+            "session_repository": session_repository,
+            "run_repository": run_repository,
+            "tick_repository": _InMemoryTickRepository(),
+            "run_executor": _NoopRunExecutor(),
+            "executor": _NoopRunExecutor(),
+        }
+        init_kwargs = {
+            name: dependencies[name]
+            for name in init_signature.parameters
+            if name != "self" and name in dependencies
+        }
+        use_case = use_case_cls(**init_kwargs)
+
+        # Act
+        result = use_case.execute(
+            session_id="session-finished-001",
+            n_steps=5,
+            runtime={"tick_interval_ms": 0},
+        )
+        resolved_result = asyncio.run(result) if inspect.isawaitable(result) else result
+
+        # Assert
+        assert (
+            len(session_repository._sessions),
+            len(session_repository.upsert_calls),
+            len(run_repository._runs),
+            resolved_result.get("session_id"),
+            resolved_result.get("run_id") != "run-finished-001",
+        ) == (1, 0, 2, "session-finished-001", True)
