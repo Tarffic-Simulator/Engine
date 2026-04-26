@@ -35,7 +35,16 @@ class _FakeSimulationModel:
                     render_color="#f39c12",
                 )
             ],
-            traffic_lights=[],
+            traffic_lights=[
+                SimpleNamespace(
+                    node_id="tl-1",
+                    phase="EW_GREEN",
+                    x=-99.1330,
+                    y=19.4326,
+                    cycle_position=0.75,
+                    time_to_change=3,
+                )
+            ],
             total_vehicles=1,
             active_vehicles=1,
         )
@@ -56,6 +65,9 @@ class _FakeSimulationModel:
 
     def get_edge_states(self) -> Dict[Any, Dict[str, Any]]:
         return self._edge_states
+
+    def get_traffic_light_config(self, node_id: str) -> None:
+        return None
 
 
 class TestSnapshotLanePayloads:
@@ -97,6 +109,26 @@ class TestSnapshotLanePayloads:
             vehicle_payload.get("render_label"),
             vehicle_payload.get("render_color"),
         ) == ("BUS", "#f39c12")
+
+    def test_get_snapshot_when_traffic_light_is_present_includes_phase_alias_for_realtime_clients(self) -> None:
+        """Traffic-light payloads should expose both phase keys for compatible realtime consumption."""
+        # Arrange
+        use_case = GetSnapshotUseCase(simulation_model=_FakeSimulationModel())
+        request = GetSnapshotRequest(
+            include_vehicle_details=False,
+            include_edge_data=False,
+            vehicle_types_filter=None,
+        )
+
+        # Act
+        response = use_case.execute(simulation_id="sim-lane-traffic-light-001", request=request)
+        light_payload = response.snapshot["traffic_lights"][0]
+
+        # Assert
+        assert (
+            light_payload.get("phase"),
+            light_payload.get("current_phase"),
+        ) == ("EW_GREEN", "EW_GREEN")
 
     def test_get_snapshot_when_edge_data_is_requested_includes_lane_count_and_lane_major_occupancy(
         self,

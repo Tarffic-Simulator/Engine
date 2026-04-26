@@ -204,6 +204,7 @@ class GetSnapshotUseCase:
             light_dict = {
                 'node_id': light_state.node_id,
                 'phase': light_state.phase,
+                'current_phase': light_state.phase,
                 'x': light_state.x,
                 'y': light_state.y,
                 'cycle_position': light_state.cycle_position,
@@ -223,9 +224,9 @@ class GetSnapshotUseCase:
                     })
             except Exception:
                 pass  # Config not available
-            
+
             lights_data.append(light_dict)
-        
+
         return lights_data
     
     def _build_edge_data(self, state: SimulationState) -> Dict[str, Dict[str, Any]]:

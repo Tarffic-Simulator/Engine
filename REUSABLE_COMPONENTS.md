@@ -108,6 +108,14 @@ Last updated: 2026-04-26
 
 **How to reuse/extend**: Future visualization-only fields can be added in the same serialization boundary without changing the domain state model or breaking backward-compatible payload consumers.
 
+## 2026-04-26 Iteration 31
+
+### Traffic light phase compatibility alias (src/traffic_engine/application/use_cases/get_snapshot.py)
+
+**Problem it solves**: Keeps realtime and snapshot consumers working when some clients still read `current_phase` while the current payload contract exposes `phase`.
+
+**How to reuse/extend**: Add future compatibility aliases for visualization payload migrations in the same serializer so transport layers and runtime orchestration stay untouched.
+
 ### ManagerBackedSimulationModel snapshot normalization (src/traffic_engine/infrastructure/runtime/manager_backed_simulation_model.py)
 
 **Problem it solves**: Normalizes legacy manager snapshot responses so realtime execution returns the full post-step state needed by persistence and SSE contracts, not only tick counters.

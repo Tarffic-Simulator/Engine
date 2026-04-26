@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Iteration 31
+
+- 2026-04-26 Iteration 31: restored backwards-compatible traffic light phase payloads for realtime snapshot consumers over WebSocket.
+  - `src/traffic_engine/application/use_cases/get_snapshot.py` now includes `current_phase` as an alias of `phase` in each traffic light snapshot entry, preserving the current contract while re-enabling clients that still read the legacy field name.
+  - `tests/test_snapshot_lane_payloads.py` now locks the compatible traffic light payload shape with a focused snapshot contract test.
+  - Validation: `tests/test_snapshot_lane_payloads.py`, `tests/test_realtime_websocket_contracts.py`, and `tests/test_realtime_run_execution.py` all passed after the fix.
+
+### Key Design Decisions - Iteration 31
+
+- Fixed the issue at the snapshot serialization boundary, which is the owning abstraction for both direct snapshot responses and realtime WebSocket tick payloads, instead of branching compatibility logic inside transport-specific code.
+- Kept `phase` as the canonical field and added `current_phase` only as a compatibility alias so existing consumers recover without forcing new clients onto a deprecated name.
+
+### Technical Debt - Iteration 31
+
+- The public traffic light payload now carries two synonymous phase keys; once all downstream consumers are migrated to `phase`, the alias can be retired behind an explicit contract versioning step.
+
 ### Changed - Iteration 30
 
 - 2026-04-26 Iteration 30: synchronized active documentation to the current core simulation + FastAPI API scope after removing bundled frontend surfaces.
