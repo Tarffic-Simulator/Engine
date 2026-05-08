@@ -1,237 +1,172 @@
-"""FastAPI application for Traffic Engine."""
+"""FastAPI application entrypoint."""
 
-from typing import List, Optional
+from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from typing import Any
 
-from .models import (
-    CreateRealtimeSessionResponse,
+from fastapi.encoders import jsonable_encoder
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+
+from ..domain.exceptions import (
+    GeographicAreaNotFoundError,
+    SimulationCancellationError,
+    SimulationNotFoundError,
+    SimulationNotReadyError,
+)
+from .dependencies import Container, get_container
+from .schemas import (
+    BoundingBoxResponse,
+    CancelSimulationResponse,
     CreateSimulationRequest,
-    CreateSimulationResponse,
-    GetMetricsRequest as ApiGetMetricsRequest,
-    GetMetricsResponse,
-    GetSnapshotRequest as ApiGetSnapshotRequest,
-    GetSnapshotResponse,
-    StepSimulationRequest,
-    StepSimulationResponse,
-)
-from .realtime_router import get_realtime_services, router as realtime_router
-from .simulation_manager import SimulationManager
-from ..application.contracts import (
-    CreateSimulationRequest as CreateSimulationDto,
-    GetMetricsRequest as GetMetricsDto,
-    GetSnapshotRequest as GetSnapshotDto,
-    StepSimulationRequest as StepSimulationDto,
-)
-from ..domain.models import BoundingBox, VehicleType
-from ..infrastructure.persistence import close_mongo_client
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="Traffic Engine API",
-    description="REST API for traffic simulation engine with cellular automata",
-    version="1.0.0"
+    GeographicAreaSummaryResponse,
+    SimulationRecordResponse,
+    SimulationStepResponse,
 )
 
-# CORS middleware for external API consumers
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-# Initialize simulation manager
-simulation_manager = SimulationManager()
-app.include_router(realtime_router)
-
-
-def _to_create_simulation_dto(request: CreateSimulationRequest) -> CreateSimulationDto:
-    """Convert API request data into the application DTO."""
-    bbox = BoundingBox(**request.bbox) if request.bbox else None
-    return CreateSimulationDto(
-        area=request.area,
-        bbox=bbox,
-        config=dict(request.config or {}),
+def _record_response(record: Any) -> SimulationRecordResponse:
+    return SimulationRecordResponse(
+        simulation_id=record.simulation_id,
+        area_id=record.area_id,
+        status=record.status.value,
+        latest_step=record.latest_step,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        config=record.config.to_dict(),
     )
 
 
-def _to_step_simulation_dto(request: StepSimulationRequest) -> StepSimulationDto:
-    """Convert API request data into the application DTO."""
-    return StepSimulationDto(
-        n_ticks=request.n_ticks,
-        actions=dict(request.actions or {}) or None,
+def create_app() -> FastAPI:
+    app = FastAPI(title="Traffic Engine API", version="0.1.0")
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        container = get_container()
+        await container.shutdown()
+        get_container.cache_clear()
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/geographic-areas", response_model=list[GeographicAreaSummaryResponse])
+    async def list_geographic_areas(
+        container: Container = Depends(get_container),
+    ) -> list[GeographicAreaSummaryResponse]:
+        areas = container.list_geographic_areas.execute()
+        return [
+            GeographicAreaSummaryResponse(
+                area_id=area.area_id,
+                name=area.name,
+                created_at=area.created_at,
+                node_count=area.node_count,
+                edge_count=area.edge_count,
+                bbox=BoundingBoxResponse(**area.topology.bbox.to_dict()),
+            )
+            for area in areas
+        ]
+
+    @app.post(
+        "/simulations",
+        response_model=SimulationRecordResponse,
+        status_code=status.HTTP_201_CREATED,
     )
+    async def create_simulation(
+        request: CreateSimulationRequest,
+        container: Container = Depends(get_container),
+    ) -> SimulationRecordResponse:
+        try:
+            record = container.create_simulation.execute(
+                area_id=request.area_id,
+                initial_vehicles=request.initial_vehicles,
+                max_vehicles=request.max_vehicles,
+                max_steps=request.max_steps,
+                spawn_rate=request.spawn_rate,
+                noise_prob=request.noise_prob,
+                seed=request.seed,
+                tick_interval_ms=request.tick_interval_ms,
+            )
+        except GeographicAreaNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _record_response(record)
 
+    @app.get("/simulations/{simulation_id}", response_model=SimulationRecordResponse)
+    async def get_simulation(
+        simulation_id: str,
+        container: Container = Depends(get_container),
+    ) -> SimulationRecordResponse:
+        try:
+            return _record_response(container.get_simulation.execute(simulation_id))
+        except SimulationNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-def _to_metrics_dto(request: ApiGetMetricsRequest) -> GetMetricsDto:
-    """Convert API request data into the application DTO."""
-    return GetMetricsDto(
-        include_history=request.include_history,
-        window_ticks=request.window_ticks,
+    @app.post(
+        "/simulations/{simulation_id}/cancel",
+        response_model=CancelSimulationResponse,
     )
+    async def cancel_simulation(
+        simulation_id: str,
+        container: Container = Depends(get_container),
+    ) -> CancelSimulationResponse:
+        try:
+            container.cancel_simulation.execute(simulation_id)
+        except SimulationNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SimulationCancellationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return CancelSimulationResponse(simulation_id=simulation_id, requested=True)
 
-
-def _to_snapshot_dto(request: ApiGetSnapshotRequest) -> GetSnapshotDto:
-    """Convert API request data into the application DTO."""
-    try:
-        vehicle_types = [VehicleType(value) for value in request.vehicle_types_filter or []]
-    except ValueError as exc:
-        valid_values = ", ".join(vehicle_type.value for vehicle_type in VehicleType)
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "vehicle_types_filter contains an invalid value. "
-                f"Expected one of: {valid_values}."
-            ),
-        ) from exc
-
-    return GetSnapshotDto(
-        include_vehicle_details=request.include_vehicle_details,
-        include_edge_data=request.include_edge_data,
-        vehicle_types_filter=vehicle_types or None,
+    @app.get(
+        "/simulations/{simulation_id}/steps",
+        response_model=list[SimulationStepResponse],
     )
+    async def list_simulation_steps(
+        simulation_id: str,
+        container: Container = Depends(get_container),
+    ) -> list[SimulationStepResponse]:
+        try:
+            steps = container.list_simulation_steps.execute(simulation_id)
+        except SimulationNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SimulationNotReadyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return [
+            SimulationStepResponse(
+                simulation_id=step.simulation_id,
+                step_number=step.step_number,
+                metrics=step.metrics.to_dict(),
+                state=step.state.to_dict(),
+                recorded_at=step.recorded_at,
+            )
+            for step in steps
+        ]
+
+    @app.websocket("/simulations/{simulation_id}/ws")
+    async def simulation_ws(websocket: WebSocket, simulation_id: str) -> None:
+        container = get_container()
+        try:
+            record = container.get_simulation.execute(simulation_id)
+        except SimulationNotFoundError:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        if record.status.value != "running":
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        await websocket.accept()
+        try:
+            async for event in container.event_bus.subscribe(simulation_id):
+                await websocket.send_json(jsonable_encoder(event))
+        except WebSocketDisconnect:
+            return
+
+    return app
 
 
-def _to_create_simulation_response(response: object) -> CreateSimulationResponse:
-    """Convert internal response data into the public API response model."""
-    return CreateSimulationResponse(
-        success=response.success,
-        error=response.error or None,
-        simulation_id=response.simulation_id,
-        initial_state=response.initial_state,
-        topology_summary=response.topology_summary,
-        traffic_lights_count=response.traffic_lights_count,
-    )
-
-
-def _to_step_simulation_response(response: object) -> StepSimulationResponse:
-    """Convert internal response data into the public API response model."""
-    return StepSimulationResponse(
-        success=response.success,
-        error=response.error or None,
-        simulation_id=response.simulation_id,
-        new_tick=response.new_tick,
-        metrics=response.metrics,
-        vehicles_spawned=response.vehicles_spawned,
-        vehicles_removed=response.vehicles_removed,
-    )
-
-
-def _to_metrics_response(response: object) -> GetMetricsResponse:
-    """Convert internal response data into the public API response model."""
-    return GetMetricsResponse(
-        success=response.success,
-        error=response.error or None,
-        simulation_id=response.simulation_id,
-        current_metrics=response.current_metrics,
-        history=response.history,
-    )
-
-
-def _to_snapshot_response(response: object) -> GetSnapshotResponse:
-    """Convert internal response data into the public API response model."""
-    return GetSnapshotResponse(
-        success=response.success,
-        error=response.error or None,
-        simulation_id=response.simulation_id,
-        snapshot=response.snapshot,
-    )
-
-
-@app.post("/simulations", response_model=CreateSimulationResponse)
-async def create_simulation(request: CreateSimulationRequest) -> CreateSimulationResponse:
-    """Create a new traffic simulation instance."""
-    response = simulation_manager.create_simulation(_to_create_simulation_dto(request))
-    return _to_create_simulation_response(response)
-
-
-@app.post("/simulations/{simulation_id}/step", response_model=StepSimulationResponse)
-async def step_simulation(
-    simulation_id: str, 
-    request: StepSimulationRequest
-) -> StepSimulationResponse:
-    """Advance simulation by specified number of ticks."""
-    response = simulation_manager.step_simulation(simulation_id, _to_step_simulation_dto(request))
-    return _to_step_simulation_response(response)
-
-
-@app.get("/simulations/{simulation_id}/metrics", response_model=GetMetricsResponse)
-async def get_metrics(
-    simulation_id: str,
-    include_history: bool = False,
-    window_ticks: Optional[int] = None
-) -> GetMetricsResponse:
-    """Get current metrics for a simulation."""
-    request = ApiGetMetricsRequest(
-        include_history=include_history,
-        window_ticks=window_ticks or 60
-    )
-    response = simulation_manager.get_metrics(simulation_id, _to_metrics_dto(request))
-    return _to_metrics_response(response)
-
-
-@app.get("/simulations/{simulation_id}/snapshot", response_model=GetSnapshotResponse)
-async def get_snapshot(
-    simulation_id: str,
-    include_vehicle_details: bool = False,
-    include_edge_data: bool = False,
-    vehicle_types_filter: Optional[List[str]] = None
-) -> GetSnapshotResponse:
-    """Get detailed snapshot of simulation state."""
-    request = ApiGetSnapshotRequest(
-        include_vehicle_details=include_vehicle_details,
-        include_edge_data=include_edge_data,
-        vehicle_types_filter=vehicle_types_filter or []
-    )
-    response = simulation_manager.get_snapshot(simulation_id, _to_snapshot_dto(request))
-    return _to_snapshot_response(response)
-
-
-@app.delete("/simulations/{simulation_id}")
-async def delete_simulation(simulation_id: str) -> dict:
-    """Delete a simulation instance."""
-    success = simulation_manager.delete_simulation(simulation_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Simulation not found")
-    return {"message": f"Simulation {simulation_id} deleted successfully"}
-
-
-@app.get("/simulations")
-async def list_simulations() -> dict:
-    """List all active simulation instances."""
-    instances = simulation_manager.list_simulations()
-    return {
-        "simulations": instances,
-        "count": len(instances)
-    }
-
-
-@app.get("/health")
-async def health_check() -> dict:
-    """Health check endpoint."""
-    return {"status": "healthy", "message": "Traffic Engine API is running"}
-
-
-@app.on_event("shutdown")
-async def shutdown_realtime_services() -> None:
-    """Shut down background realtime services when the app stops."""
-    if get_realtime_services.cache_info().currsize > 0:
-        services = get_realtime_services()
-        if hasattr(services.run_executor, "shutdown"):
-            await services.run_executor.shutdown()
-
-    close_mongo_client()
+app = create_app()
 
 
 def main() -> None:
-    """Run the API with uvicorn for the console entry point."""
-    import uvicorn
+    """Console script entrypoint placeholder for local development."""
 
-    uvicorn.run("traffic_engine.api.app:app", host="0.0.0.0", port=8000)
-
-
-if __name__ == "__main__":
-    main()

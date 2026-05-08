@@ -1,136 +1,152 @@
-# Motor de Simulación de Tráfico CDMX
+# Traffic Engine
 
-Simulador de tráfico urbano basado en autómatas celulares (modelo Nagel-Schreckenberg) para la Ciudad de México.
+API de simulacion de trafico basada en FastAPI, NaSch y MongoDB.
 
-## Estado del Proyecto
+## Requisitos
 
-### Implementado
+- Python 3.10 o superior
+- Docker y Docker Compose
+- Acceso a internet si vas a precargar areas con OSMnx
 
-- Motor NaSch con topologías OSM y semáforos configurables en `src/traffic_engine/`
-- API HTTP de simulación síncrona con FastAPI
-- Sesiones realtime persistidas con ejecución en segundo plano, replay/follow por WebSocket canónico y compatibilidad SSE
-- Persistencia MongoDB para `simulation_sessions`, `simulation_runs` y `simulation_ticks`
-- Docker Compose local para el stack de desarrollo
-- Suite de pruebas para dominio, API, contratos realtime, persistencia y payloads lane-aware
+## Variables de entorno
 
-### Alcance Activo del Repositorio
-
-| Superficie | Estado | Nota |
-| --- | --- | --- |
-| Core de simulación | Activo | Dominio NaSch, topología, reglas multicarril y semáforos |
-| API FastAPI | Activa | Endpoints síncronos y realtime sobre el mismo núcleo de dominio |
-| Persistencia realtime | Activa | MongoDB y repositorios para sesiones, runs y ticks |
-| Cliente visual integrado | Fuera de alcance | Los consumidores externos deben usar la API pública documentada en `docs/CONSUME_SERVICE.md` |
-
-### Trabajo Futuro
-
-1. Sustituir el ejecutor local en proceso por un adaptador worker-backed sin cambiar el contrato `RunExecutor`.
-2. Definir reconciliación de runs activos ante reinicios de proceso o despliegues distribuidos.
-3. Reducir deuda de compatibilidad Pydantic v2 en esquemas realtime.
-
-## Estructura del Proyecto
-
-```text
-src/traffic_engine/                # Motor limpio para producción
-├── domain/                        # Lógica NaSch + entidades
-├── application/                   # Casos de uso + contratos
-├── infrastructure/                # Adaptadores OSMnx, MongoDB, runtime y streaming
-└── api/                           # API FastAPI síncrona + realtime
-
-docs/                              # Guías operativas y de consumo
-tests/                             # Suite de regresión para core, API y realtime
-docker/mongo/                      # Soporte local para MongoDB
-```
-
-## Funcionalidades Clave
-
-### Simulación NaSch
-
-- **4 reglas sincrónicas**: aceleración, frenado, ruido estocástico, movimiento
-- **Discretización realista**: celdas de 5.0 m y velocidades hasta 60 km/h
-- **Tipos de vehículo**: carro, bus y moto con comportamientos diferenciados
-- **Flujo dinámico**: vehículos entran y salen por nodos frontera
-
-### Red Vial CDMX
-
-- **Datos reales**: OpenStreetMap vía OSMnx
-- **Topología**: `MultiDiGraph` dirigido con velocidades por arista
-- **Escalabilidad**: desde colonias hasta áreas urbanas extensas
-
-### Sistema de Semáforos
-
-- **Ubicación configurable**: proveedores fijos o por centralidad
-- **Fases NS/EW**: definidas por orientación geográfica de las calles
-- **Olas verdes**: offset configurable entre semáforos adyacentes
-
-### API REST y Realtime
-
-- **Simulaciones múltiples**: gestión concurrente por UUID con `SimulationManager`
-- **Métricas en tiempo real**: velocidad, densidad, throughput y congestión
-- **Snapshots detallados**: posiciones de vehículos, estado de semáforos y payload lane-aware
-- **Sesiones realtime**: creación, ejecución en background, persistencia, replay y follow
-- **Consumo externo**: clientes HTTP/WebSocket sobre contratos públicos, sin frontend activo dentro del repositorio
-
-## Documentación Arquitectónica
-
-- **[DECISIONS.md](DECISIONS.md)**: decisiones de diseño activas para core y API
-- **[WORK_PLAN.md](WORK_PLAN.md)**: backlog operativo actual y slices de validación
-- **[ARCHITECTURE.md](ARCHITECTURE.md)**: arquitectura fuente de verdad del repositorio
-- **[PIPELINES.md](PIPELINES.md)**: workflows de desarrollo y pipeline actual
-- **[docs/CONSUME_SERVICE.md](docs/CONSUME_SERVICE.md)**: ejemplos Python para consumir la API HTTP/WebSocket
-
-## Desarrollo Local
-
-### API REST y runtime realtime
+1. Crea tu archivo local:
 
 ```bash
-cd /home/erick/Desktop/github/Engine
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
 cp .env.example .env
-docker compose up -d mongodb
-uvicorn traffic_engine.api.app:app --reload
-# -> http://localhost:8000/docs
 ```
 
-Endpoints principales:
+1. Ajusta al menos estas variables antes de usar produccion:
 
-| Método | Ruta | Propósito |
-| --- | --- | --- |
-| `POST` | `/simulations` | Crear simulación síncrona |
-| `POST` | `/simulations/{simulation_id}/step` | Avanzar ticks |
-| `GET` | `/simulations/{simulation_id}/metrics` | Leer métricas agregadas |
-| `GET` | `/simulations/{simulation_id}/snapshot` | Leer snapshot detallado |
-| `POST` | `/realtime/sessions` | Crear sesión realtime persistida |
-| `POST` | `/realtime/sessions/{session_id}/runs` | Extender una sesión finalizada con un nuevo run |
-| `GET` | `/realtime/sessions/{session_id}/ticks` | Leer historial persistido de ticks |
-| `GET` | `/realtime/sessions/{session_id}/ws` | Replay y follow WebSocket canónico por `run_id` |
-| `GET` | `/realtime/sessions/{session_id}/stream` | Compatibilidad SSE para clientes heredados |
+- `MONGO_ROOT_PASSWORD`
+- `MONGO_APP_PASSWORD`
+- `MONGODB_URI`
 
-Para ejemplos de consumo por clientes externos, ver `docs/CONSUME_SERVICE.md` y `docs/API.md`.
+La API lee la conexion Mongo desde `.env` usando `MONGODB_URI`, `MONGODB_DATABASE` y `MONGODB_APP_NAME`.
 
-## Stack Tecnológico
+## Desarrollo
 
-### Núcleo y runtime
+### 1. Crear y activar entorno virtual
 
-- **Python 3.8+**
-- **NumPy**: arrays para celdas y cálculos vectorizados
-- **NetworkX**: representación del grafo vial `MultiDiGraph`
-- **OSMnx**: descarga y procesamiento OpenStreetMap
-- **PyMongo**: persistencia de sesiones realtime y ticks
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e ".[dev]"
+```
 
-### Servicio y calidad
+### 2. Levantar MongoDB local
 
-- **FastAPI**: framework web async con tipado
-- **Pydantic**: validación y serialización de contratos API
-- **uvicorn**: servidor ASGI para desarrollo local
-- **pytest**: test suite para dominio, API y realtime
-- **setuptools**: packaging definido en `pyproject.toml`
+```bash
+docker compose up -d mongodb
+docker compose ps mongodb
+```
 
-## Contribución
+Mongo se inicializa con:
 
-El proyecto sigue un pipeline estructurado con agentes especializados para decisiones, TDD e implementación.
+- autenticacion habilitada
+- usuario de aplicacion dedicado
+- colecciones base: `geographic_areas`, `simulations`, `simulation_steps`
+- indices unicos para areas, simulaciones y pasos
 
-Ver [PIPELINES.md](PIPELINES.md) para el workflow y [docs/INDEX.md](docs/INDEX.md) para la documentación operativa actual.
+### 3. Precargar areas geograficas en Mongo
+
+Carga el set por defecto de CDMX:
+
+```bash
+python scripts/init_mongo_geodata.py
+```
+
+O carga areas explicitas:
+
+```bash
+python scripts/init_mongo_geodata.py \
+  "Colonia Roma, Cuauhtemoc, Ciudad de Mexico, Mexico" \
+  "Condesa, Cuauhtemoc, Ciudad de Mexico, Mexico"
+```
+
+### 4. Levantar la API en modo desarrollo
+
+```bash
+uvicorn traffic_engine.api.app:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Puntos utiles:
+
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- OpenAPI: `http://127.0.0.1:8000/openapi.json`
+- Healthcheck: `http://127.0.0.1:8000/health`
+
+### 5. Ejecutar pruebas focalizadas
+
+```bash
+pytest tests/test_nasch_model.py tests/test_use_cases.py tests/test_api_app.py
+```
+
+## Produccion
+
+La forma mas simple de operar este repo hoy es dejar Mongo en Docker y ejecutar la API con Uvicorn en modo multiproceso.
+
+### 1. Preparar entorno
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install .
+```
+
+### 2. Configurar variables reales
+
+- copia `.env.example` a `.env`
+- cambia credenciales por valores fuertes
+- confirma que `MONGODB_URI` apunta al host y puerto correctos
+
+### 3. Levantar MongoDB
+
+```bash
+docker compose up -d mongodb
+```
+
+### 4. Precargar datos si el ambiente esta vacio
+
+```bash
+python scripts/init_mongo_geodata.py
+```
+
+### 5. Levantar la API en modo produccion
+
+```bash
+uvicorn traffic_engine.api.app:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers
+```
+
+Notas operativas:
+
+- ajusta `--workers` segun CPU y memoria disponibles
+- publica la API detras de un reverse proxy si va a exponerse a internet
+- mantén `.env` fuera del control de versiones
+- el WebSocket de simulaciones vive en `/simulations/{simulation_id}/ws`
+
+## Parar servicios
+
+Parar solo Mongo y conservar datos:
+
+```bash
+docker compose down
+```
+
+Parar Mongo y borrar el volumen local:
+
+```bash
+docker compose down -v
+```
+
+## Endpoints principales
+
+- `GET /health`
+- `GET /geographic-areas`
+- `POST /simulations`
+- `GET /simulations/{simulation_id}`
+- `POST /simulations/{simulation_id}/cancel`
+- `GET /simulations/{simulation_id}/steps`
+- `WS /simulations/{simulation_id}/ws`

@@ -1,0 +1,154 @@
+{
+  "info": {
+    "name": "Traffic Engine API Minimal",
+    "description": "Minimal Postman collection for the current FastAPI HTTP endpoints exposed by the traffic engine.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "f6c5c3c4-4db0-4d84-a05c-2d6ff6940f5d"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "area_id",
+      "value": "roma-norte"
+    },
+    {
+      "key": "simulation_id",
+      "value": "sim-001"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Checks that the API is up."
+      }
+    },
+    {
+      "name": "List Geographic Areas",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/geographic-areas",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "geographic-areas"
+          ]
+        },
+        "description": "Returns the geographic areas that can be used to start simulations."
+      }
+    },
+    {
+      "name": "Create Simulation",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 201) {",
+              "  const payload = pm.response.json();",
+              "  if (payload.simulation_id) pm.collectionVariables.set('simulation_id', payload.simulation_id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"area_id\": \"{{area_id}}\",\n  \"initial_vehicles\": 25,\n  \"max_vehicles\": 60,\n  \"max_steps\": 120,\n  \"spawn_rate\": 0.2,\n  \"noise_prob\": 0.3,\n  \"seed\": 42,\n  \"tick_interval_ms\": 100\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/simulations",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "simulations"
+          ]
+        },
+        "description": "Creates a simulation and stores the returned simulation_id as a collection variable."
+      }
+    },
+    {
+      "name": "Get Simulation",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/simulations/{{simulation_id}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "simulations",
+            "{{simulation_id}}"
+          ]
+        },
+        "description": "Fetches the simulation record for the current simulation_id variable."
+      }
+    },
+    {
+      "name": "List Simulation Steps",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/simulations/{{simulation_id}}/steps",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "simulations",
+            "{{simulation_id}}",
+            "steps"
+          ]
+        },
+        "description": "Lists stored steps for the current simulation. This returns 409 until the simulation is ready."
+      }
+    },
+    {
+      "name": "Cancel Simulation",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/simulations/{{simulation_id}}/cancel",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "simulations",
+            "{{simulation_id}}",
+            "cancel"
+          ]
+        },
+        "description": "Requests cancellation for the current simulation."
+      }
+    }
+  ]
+}
